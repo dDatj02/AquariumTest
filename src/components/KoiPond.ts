@@ -12,16 +12,21 @@ export interface FishSpeciesInfo {
   url: string;
   aspectRatio: number;
   baseScale: number;
+  isGoldfish?: boolean; // Thân tròn bự: bơi quẩy đuôi và vây, không uốn thân
 }
 
 export const FISH_SPECIES: FishSpeciesInfo[] = [
   { id: 0, name: 'kohaku', label: 'Cá Koi Kohaku (Trắng Cam)', url: '/assets/fish/fish_0.png', aspectRatio: 2.46, baseScale: 1.05 },
   { id: 1, name: 'showa', label: 'Cá Koi Showa (Đen Đỏ Trắng)', url: '/assets/fish/fish_1.png', aspectRatio: 2.22, baseScale: 1.02 },
-  { id: 2, name: 'goldfish', label: 'Cá Vàng Ba Đuôi (Fantail)', url: '/assets/fish/fish_2.png', aspectRatio: 2.64, baseScale: 0.95 },
+  { id: 2, name: 'goldfish', label: 'Cá Vàng Ba Đuôi (Fantail)', url: '/assets/fish/fish_2.png', aspectRatio: 2.64, baseScale: 0.95, isGoldfish: true },
   { id: 3, name: 'comet', label: 'Cá Chép Đỏ (Red Comet)', url: '/assets/fish/fish_3.png', aspectRatio: 2.75, baseScale: 1.0 },
   { id: 4, name: 'cichlid', label: 'Cá La Hán Lam Hồng (Cichlid)', url: '/assets/fish/fish_4.png', aspectRatio: 2.60, baseScale: 1.02 },
   { id: 5, name: 'flowerhorn', label: 'Cá La Hán Đại (Flowerhorn)', url: '/assets/fish/fish_5.png', aspectRatio: 2.65, baseScale: 1.12 },
   { id: 6, name: 'arowana', label: 'Cá Rồng Vây Dài (Black Arowana)', url: '/assets/fish/fish_6.png', aspectRatio: 2.96, baseScale: 1.22 },
+  { id: 7, name: 'oranda', label: 'Cá Vàng Đầu Lân (Oranda Crown)', url: '/assets/fish/fish_7.png', aspectRatio: 1.49, baseScale: 0.96, isGoldfish: true },
+  { id: 8, name: 'ryukin', label: 'Cá Vàng Lưu Kim (Ryukin Calico)', url: '/assets/fish/fish_8.png', aspectRatio: 1.34, baseScale: 0.93, isGoldfish: true },
+  { id: 9, name: 'butterfly_fantail', label: 'Cá Vàng Đuôi Bướm (Golden Butterfly)', url: '/assets/fish/fish_9.png', aspectRatio: 1.71, baseScale: 0.98, isGoldfish: true },
+  { id: 10, name: 'silk_veiltail', label: 'Cá Vàng Thủy Mặc (Silk Veiltail)', url: '/assets/fish/fish_10.png', aspectRatio: 1.53, baseScale: 0.96, isGoldfish: true },
 ];
 
 export interface LoadedFishSprite {
@@ -29,6 +34,15 @@ export interface LoadedFishSprite {
   shadowCanvas: HTMLCanvasElement;
   isReady: boolean;
   aspectRatio: number;
+}
+
+export interface TurtleRig {
+  body: LoadedFishSprite;
+  flipperFL: LoadedFishSprite;
+  flipperFR: LoadedFishSprite;
+  flipperBL: LoadedFishSprite;
+  flipperBR: LoadedFishSprite;
+  isReady: boolean;
 }
 
 export interface KoiFish {
@@ -53,6 +67,21 @@ export interface KoiFish {
   glidePhase: number;      // Stroke-and-glide propulsion cycle
 }
 
+export interface KoiTurtle {
+  x: number;
+  y: number;
+  targetAngle: number;
+  angle: number;
+  turnRate: number;
+  speed: number;
+  baseSpeed: number;
+  size: number;
+  paddlePhase: number;
+  paddleRate: number;
+  depth: number;
+  wanderTimer: number;
+}
+
 export interface LilyPad {
   x: number;
   y: number;
@@ -73,13 +102,16 @@ export class KoiPondLayer {
   private bgImage: HTMLImageElement | null = null;
   private isBgLoaded = false;
   public fishList: KoiFish[] = [];
+  public turtleList: KoiTurtle[] = [];
   public lilies: LilyPad[] = [];
   public width: number = 1024;
   public height: number = 1024;
   public showFish: boolean = true;
+  public showTurtles: boolean = true;
   public showLilies: boolean = true;
   private lastTime: number = 0;
   private sprites: Map<number, LoadedFishSprite> = new Map();
+  private turtleRig: TurtleRig | null = null;
   public selectedSpeciesFilter: number | 'all' = 'all';
 
   constructor(width = 1024, height = 1024) {
@@ -95,7 +127,9 @@ export class KoiPondLayer {
     this.ctx = context;
 
     this.preloadFishSprites();
+    this.preloadTurtleSprite();
     this.initFish(5);
+    this.initTurtles(2);
     this.initLilies(12); // Tăng số lượng lá sen mặc định lên 12 lá
   }
 
@@ -130,6 +164,54 @@ export class KoiPondLayer {
     });
   }
 
+  private loadTurtlePart(url: string, onPartReady: () => void): LoadedFishSprite {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    const spriteRecord: LoadedFishSprite = {
+      img,
+      shadowCanvas: document.createElement('canvas'),
+      isReady: false,
+      aspectRatio: 512 / 579,
+    };
+
+    img.onload = () => {
+      spriteRecord.isReady = true;
+      spriteRecord.aspectRatio = img.width / img.height;
+      const sc = spriteRecord.shadowCanvas;
+      sc.width = img.width;
+      sc.height = img.height;
+      const sCtx = sc.getContext('2d');
+      if (sCtx) {
+        sCtx.drawImage(img, 0, 0);
+        sCtx.globalCompositeOperation = 'source-in';
+        sCtx.fillStyle = '#06080d';
+        sCtx.fillRect(0, 0, img.width, img.height);
+      }
+      onPartReady();
+    };
+    img.src = url;
+    return spriteRecord;
+  }
+
+  private preloadTurtleSprite() {
+    let readyCount = 0;
+    const checkAllReady = () => {
+      readyCount++;
+      if (this.turtleRig && readyCount >= 5) {
+        this.turtleRig.isReady = true;
+      }
+    };
+
+    this.turtleRig = {
+      body: this.loadTurtlePart('/assets/turtle_body.png', checkAllReady),
+      flipperFL: this.loadTurtlePart('/assets/turtle_flipper_fl.png', checkAllReady),
+      flipperFR: this.loadTurtlePart('/assets/turtle_flipper_fr.png', checkAllReady),
+      flipperBL: this.loadTurtlePart('/assets/turtle_flipper_bl.png', checkAllReady),
+      flipperBR: this.loadTurtlePart('/assets/turtle_flipper_br.png', checkAllReady),
+      isReady: false,
+    };
+  }
+
   public resize(w: number, h: number) {
     if (this.width === w && this.height === h) return;
     this.width = Math.max(256, Math.min(2048, w));
@@ -145,7 +227,7 @@ export class KoiPondLayer {
   }
 
   public setFishCount(count: number) {
-    const target = Math.max(0, Math.min(12, count));
+    const target = Math.max(0, Math.min(16, count));
     while (this.fishList.length < target) {
       const nextSpecies = this.selectedSpeciesFilter === 'all'
         ? (this.fishList.length % FISH_SPECIES.length)
@@ -175,6 +257,46 @@ export class KoiPondLayer {
     this.initLilies(target);
   }
 
+  public setTurtleCount(count: number) {
+    const target = Math.max(0, Math.min(8, count));
+    while (this.turtleList.length < target) {
+      this.turtleList.push(this.createTurtle());
+    }
+    while (this.turtleList.length > target) {
+      this.turtleList.pop();
+    }
+  }
+
+  public createTurtle(): KoiTurtle {
+    const startX = 0.15 * this.width + Math.random() * 0.7 * this.width;
+    const startY = 0.15 * this.height + Math.random() * 0.7 * this.height;
+    const angle = Math.random() * Math.PI * 2;
+    const baseSpeed = 0.55 + Math.random() * 0.35;
+    const size = 105 + Math.random() * 35;
+
+    return {
+      x: startX,
+      y: startY,
+      angle,
+      targetAngle: angle,
+      turnRate: 0,
+      speed: baseSpeed,
+      baseSpeed,
+      size,
+      paddlePhase: Math.random() * Math.PI * 2,
+      paddleRate: 2.2 + Math.random() * 0.6,
+      depth: 0.18 + Math.random() * 0.35,
+      wanderTimer: Math.random() * 15,
+    };
+  }
+
+  public initTurtles(count: number) {
+    this.turtleList = [];
+    for (let i = 0; i < count; i++) {
+      this.turtleList.push(this.createTurtle());
+    }
+  }
+
   public createFish(speciesIndex?: number): KoiFish {
     const chosenIndex = speciesIndex !== undefined
       ? speciesIndex
@@ -186,7 +308,16 @@ export class KoiPondLayer {
     const startX = 0.1 * this.width + Math.random() * 0.8 * this.width;
     const startY = 0.1 * this.height + Math.random() * 0.8 * this.height;
     const angle = Math.random() * Math.PI * 2;
-    const baseSpeed = 0.85 + Math.random() * 0.45;
+
+    // Cá vàng thân bự (Oranda, Ryukin, Butterfly, Silk Veiltail, Fantail)
+    // bơi thong thả bồng bềnh, đuôi và vây quẫy nhanh nhẹn với tần số cao hơn
+    const isGoldfish = !!spec.isGoldfish;
+    const baseSpeed = isGoldfish
+      ? 0.72 + Math.random() * 0.30
+      : 0.85 + Math.random() * 0.45;
+    const wiggleFrequency = isGoldfish
+      ? 2.85 + Math.random() * 0.55
+      : 2.10 + Math.random() * 0.50;
 
     return {
       x: startX,
@@ -200,12 +331,12 @@ export class KoiPondLayer {
       speed: baseSpeed,
       acceleration: 0,
       baseSpeed,
-      maxSpeed: 2.4,
+      maxSpeed: isGoldfish ? 2.0 : 2.4,
       size: baseLength,
       swimPhase: Math.random() * Math.PI * 2,
       speciesIndex: chosenIndex,
       depth: 0.15 + Math.random() * 0.55,
-      wiggleFrequency: 2.1 + Math.random() * 0.5,
+      wiggleFrequency,
       wanderTimer: Math.random() * 20,
       glidePhase: Math.random() * Math.PI * 2,
     };
@@ -297,6 +428,19 @@ export class KoiPondLayer {
         fish.targetAngle = fleeAngle + (Math.random() - 0.5) * 0.4;
         fish.speed = Math.min(fish.maxSpeed * 1.8, fish.speed + 2.8);
         fish.glidePhase = Math.PI * 0.5; // Trigger burst stroke
+      }
+    }
+
+    // Turtles react to splashes with quick flipper paddling
+    for (const turtle of this.turtleList) {
+      const dx = turtle.x - worldX;
+      const dy = turtle.y - worldY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < 260) {
+        const fleeAngle = Math.atan2(dy, dx);
+        turtle.targetAngle = fleeAngle + (Math.random() - 0.5) * 0.5;
+        turtle.speed = Math.min(1.8, turtle.speed + 1.1);
+        turtle.paddleRate = 3.6;
       }
     }
   }
@@ -419,6 +563,79 @@ export class KoiPondLayer {
       if (fish.y > this.height + 150) fish.y = -80;
     }
 
+    // Update turtles (peaceful flipper paddling & gentle swimming)
+    if (this.showTurtles) {
+      for (const turtle of this.turtleList) {
+        turtle.wanderTimer += dt;
+
+        // Gentle sinusoidal steering
+        turtle.targetAngle += (Math.sin(turtle.wanderTimer * 0.3) * 0.16 + Math.cos(turtle.wanderTimer * 0.6) * 0.1) * dt;
+
+        // Gentle curiosity towards pointer
+        if (pointerX !== undefined && pointerY !== undefined && turtle.speed < 1.4) {
+          const pdx = pointerX - turtle.x;
+          const pdy = pointerY - turtle.y;
+          const pDist = Math.hypot(pdx, pdy);
+          if (pDist < 260 && pDist > 50) {
+            const approach = Math.atan2(pdy, pdx);
+            let dAng = approach - turtle.targetAngle;
+            while (dAng > Math.PI) dAng -= Math.PI * 2;
+            while (dAng < -Math.PI) dAng += Math.PI * 2;
+            turtle.targetAngle += dAng * 0.55 * dt;
+          }
+        }
+
+        // Avoid boundaries with wide arc
+        const margin = 140;
+        let repulseX = 0;
+        let repulseY = 0;
+        if (turtle.x < margin) repulseX += Math.pow((margin - turtle.x) / margin, 1.2);
+        if (turtle.x > this.width - margin) repulseX -= Math.pow((turtle.x - (this.width - margin)) / margin, 1.2);
+        if (turtle.y < margin) repulseY += Math.pow((margin - turtle.y) / margin, 1.2);
+        if (turtle.y > this.height - margin) repulseY -= Math.pow((turtle.y - (this.height - margin)) / margin, 1.2);
+
+        if (repulseX !== 0 || repulseY !== 0) {
+          const avoidAngle = Math.atan2(repulseY, repulseX);
+          let diff = avoidAngle - turtle.targetAngle;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          turtle.targetAngle += diff * 1.5 * dt;
+        }
+
+        // Smooth gradual rotation limit (~0.7 rad/s - calm, serene turn)
+        let angleDiff = turtle.targetAngle - turtle.angle;
+        while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+        while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+        const maxTurnRate = 0.7;
+        const desiredTurnRate = Math.max(-maxTurnRate, Math.min(maxTurnRate, angleDiff * 0.85));
+        turtle.turnRate += (desiredTurnRate - turtle.turnRate) * 1.4 * dt;
+        turtle.angle += turtle.turnRate * dt;
+
+        // Flipper paddling cycle (stroke and glide)
+        turtle.paddlePhase += turtle.paddleRate * dt;
+        const paddleStroke = Math.sin(turtle.paddlePhase);
+
+        // Gradually decay speed back to baseSpeed if boosted
+        turtle.speed += (turtle.baseSpeed - turtle.speed) * 1.2 * dt;
+        // Slowly relax paddleRate back to normal (2.2)
+        turtle.paddleRate += (2.2 - turtle.paddleRate) * 1.0 * dt;
+
+        // Propulsion pulse when paddling forward:
+        const thrust = paddleStroke > 0 ? 0.3 * Math.pow(paddleStroke, 1.5) : -0.1 * Math.abs(paddleStroke);
+        const forwardSpeed = Math.max(0.3, turtle.speed + thrust);
+
+        // Advance position in direction of heading
+        turtle.x += Math.cos(turtle.angle) * forwardSpeed * 45 * dt;
+        turtle.y += Math.sin(turtle.angle) * forwardSpeed * 45 * dt;
+
+        // Bounds wrapping
+        if (turtle.x < -160) turtle.x = this.width + 100;
+        if (turtle.x > this.width + 160) turtle.x = -100;
+        if (turtle.y < -160) turtle.y = this.height + 100;
+        if (turtle.y > this.height + 160) turtle.y = -100;
+      }
+    }
+
     // Drifting lily pads
     for (const lily of this.lilies) {
       lily.rotation += lily.vRot;
@@ -462,14 +679,31 @@ export class KoiPondLayer {
       ctx.fillRect(0, 0, width, height);
     }
 
-    // 2. Render Fish Shadows on Pond Floor (with realistic depth offset & matching body undulation)
+    // 2. Render Fish Shadows on Pond Floor
     if (this.showFish) {
       for (const fish of this.fishList) {
         this.renderFishUndulated(ctx, fish, true);
       }
-      // 3. Render Fish Bodies (7 ornamental species with fluid swimming undulation)
+    }
+
+    // 2b. Render Turtle Shadows
+    if (this.showTurtles) {
+      for (const turtle of this.turtleList) {
+        this.renderTurtle(ctx, turtle, true);
+      }
+    }
+
+    // 3. Render Fish Bodies (7 ornamental species)
+    if (this.showFish) {
       for (const fish of this.fishList) {
         this.renderFishUndulated(ctx, fish, false);
+      }
+    }
+
+    // 3b. Render Turtle Bodies (Cute green sea turtles)
+    if (this.showTurtles) {
+      for (const turtle of this.turtleList) {
+        this.renderTurtle(ctx, turtle, false);
       }
     }
 
@@ -479,6 +713,90 @@ export class KoiPondLayer {
         this.renderLilyPad(ctx, lily);
       }
     }
+  }
+
+  private renderTurtle(ctx: CanvasRenderingContext2D, turtle: KoiTurtle, isShadow: boolean) {
+    if (!this.turtleRig || !this.turtleRig.isReady) return;
+
+    // 1. Sea Turtle flipper paddling kinematics:
+    // Front flippers execute powerful rhythmic rowing strokes (power sweep back, feather forward)
+    const stroke = Math.sin(turtle.paddlePhase);
+
+    // Front flipper sweep angles:
+    // When stroke > 0 (power propulsion stroke): flippers sweep backwards toward tail
+    // Left flipper (upper): rotates counter-clockwise (-angle toward tail)
+    // Right flipper (lower): rotates clockwise (+angle toward tail)
+    // Turn banking: outside flipper strokes wider to bank and turn smoothly
+    const turnBias = turtle.turnRate * 0.35;
+    const flAngle = -stroke * 0.40 + turnBias;
+    const frAngle = stroke * 0.40 + turnBias;
+
+    // Rear flippers: subtle rudder stabilization with slight phase lag
+    const rearStroke = Math.sin(turtle.paddlePhase - 0.7);
+    const blAngle = rearStroke * 0.16 + turtle.turnRate * 0.28;
+    const brAngle = -rearStroke * 0.16 + turtle.turnRate * 0.28;
+
+    // Gentle hull sway and breathing undulation
+    const sway = Math.sin(turtle.paddlePhase) * 0.035;
+    // Subtle surging pulse along heading when power stroke propels forward
+    const surge = stroke > 0 ? stroke * 2.5 : 0;
+
+    const scale = turtle.size / 512;
+    const drawWidth = turtle.size;
+    const drawHeight = turtle.size * (579 / 512);
+    const bodyOffsetX = -211 * scale;
+    const bodyOffsetY = -289 * scale;
+
+    ctx.save();
+    if (isShadow) {
+      const shadowOffsetX = 18 * turtle.depth;
+      const shadowOffsetY = 24 * turtle.depth;
+      ctx.translate(turtle.x + shadowOffsetX, turtle.y + shadowOffsetY);
+      ctx.rotate(turtle.angle + sway);
+      ctx.globalAlpha = 0.32 * (1.0 - turtle.depth * 0.25);
+    } else {
+      ctx.translate(turtle.x, turtle.y);
+      ctx.rotate(turtle.angle + sway);
+      ctx.globalAlpha = 0.98;
+    }
+
+    const drawPart = (sprite: LoadedFishSprite) => isShadow ? sprite.shadowCanvas : sprite.img;
+
+    // Helper to draw a flipper smoothly articulated around its shoulder/hip joint
+    const drawFlipper = (sprite: LoadedFishSprite, jx: number, jy: number, angle: number) => {
+      const localJointX = (jx - 211) * scale;
+      const localJointY = (jy - 289) * scale;
+      ctx.save();
+      ctx.translate(localJointX, localJointY);
+      ctx.rotate(angle);
+      ctx.drawImage(
+        drawPart(sprite),
+        -jx * scale,
+        -jy * scale,
+        drawWidth,
+        drawHeight
+      );
+      ctx.restore();
+    };
+
+    // 1. Draw rear flippers (underneath shell rim)
+    drawFlipper(this.turtleRig.flipperBL, 88, 168, blAngle);
+    drawFlipper(this.turtleRig.flipperBR, 88, 410, brAngle);
+
+    // 2. Draw front flippers (underneath shell rim)
+    drawFlipper(this.turtleRig.flipperFL, 315, 165, flAngle);
+    drawFlipper(this.turtleRig.flipperFR, 315, 413, frAngle);
+
+    // 3. Draw turtle body (shell + head + tail - drawn on top, perfectly masking flipper bases!)
+    ctx.drawImage(
+      drawPart(this.turtleRig.body),
+      bodyOffsetX + surge,
+      bodyOffsetY,
+      drawWidth,
+      drawHeight
+    );
+
+    ctx.restore();
   }
 
   /**
@@ -517,12 +835,14 @@ export class KoiPondLayer {
     ctx.rotate(fish.angle);
 
     // Number of vertical slice strips along length for silky smooth spine deformation
-    const NUM_SLICES = 24;
+    const NUM_SLICES = 32;
     const srcSliceW = srcW / NUM_SLICES;
     const destSliceW = len / NUM_SLICES;
 
     // Turn spine curvature (-1 to 1) bends the entire body gracefully along the turning arc
     const turnBend = fish.spineCurvature;
+    const spec = FISH_SPECIES[fish.speciesIndex] || FISH_SPECIES[0];
+    const isGoldfish = !!spec.isGoldfish;
 
     // In sprite coordinates:
     // Left (x = 0) is tail, Right (x = srcW) is head.
@@ -534,36 +854,97 @@ export class KoiPondLayer {
       const u = i / (NUM_SLICES - 1);
       const bendProgress = 1.0 - u; // 0.0 at head, 1.0 at tail tip
 
-      // 1. Dynamic Turn Arc Curvature:
-      // The spine flexes progressively behind the head into a supple, organic C-curve along the turning arc
-      // Using Math.pow(bendProgress, 1.25) guarantees zero lateral/angular deflection at the head (snout & skull stay locked forward)
-      const turnLateral = turnBend * (len * 0.17 + h * 0.35) * Math.sin(bendProgress * Math.PI * 0.55) * Math.pow(bendProgress, 1.25);
-      const turnAngle = -turnBend * 0.75 * Math.pow(bendProgress, 1.25);
+      let lateralY = 0;
+      let sliceAngle = 0;
+      let sliceH = h;
 
-      // 2. Multi-Harmonic Traveling Undulation Wave (propelling from behind head down to tail):
-      const wavePhase = fish.swimPhase - (1.0 - u) * 3.7;
+      if (isGoldfish) {
+        // ===================================================================
+        // DÁNG BƠI CÁ VÀNG (GOLDFISH KINEMATICS):
+        // Thân bự tròn trịa nên KHÔNG CẦN UỐN THÂN (thân giữ thẳng nguyên khối).
+        // Chỉ quẩy đuôi (caudal fin wag/flutter) và vẫy vây bơi hai bên (pectoral fins).
+        // ===================================================================
 
-      // Chest & pectoral area flexible breathing motion (fades to 0 at head tip)
-      const chestFlex = Math.sin((1.0 - u) * Math.PI * 1.3) * (h * 0.04) * Math.sin(wavePhase + 0.6) * Math.pow(1.0 - u, 0.6);
+        // 1. Toàn thân bự chỉ lắc nhẹ (rigid body recoil) do phản lực quẩy đuôi
+        // Giữ đồng nhất cho toàn bộ thân cá (không uốn cong trục thân)
+        const bodyRecoil = Math.sin(fish.swimPhase) * 0.022;
 
-      // Mid-trunk belly flex (fades to 0 at head tip)
-      const bellyFlex = Math.sin((1.0 - u) * Math.PI * 0.95) * (h * 0.08) * Math.sin(wavePhase) * Math.pow(1.0 - u, 0.8);
+        // Điểm bắt đầu cuống đuôi: u ~ 0.44 (44% từ chóp đuôi lên)
+        // Vùng từ 0.44 đến 1.0: Thân tròn bự, bụng bự, đầu cá -> KHÔNG UỐN THÂN
+        const TAIL_START_U = 0.44;
 
-      // Caudal peduncle & main tail stroke (power propulsion)
-      const tailSwing = Math.pow(1.0 - u, 1.45) * (h * 0.28) * Math.sin(wavePhase);
+        if (u >= TAIL_START_U) {
+          // Thân bự giữ thẳng hoàn toàn, không uốn lượn, không gập khúc
+          lateralY = 0;
+          sliceAngle = bodyRecoil;
 
-      // Trailing soft fin ripple (supple "veil" flutter on tail fins)
-      const finRipple = u < 0.38
-        ? Math.sin(wavePhase - 0.9) * (h * 0.09) * Math.pow((0.38 - u) / 0.38, 1.4)
-        : 0;
+          // 2. VẪY VÂY BƠI HAI BÊN (Pectoral Fins Flutter):
+          // Vùng vây bơi ngực nằm ở khoảng u = 0.58 đến 0.82
+          // Vây bơi phập phồng nhịp nhàng tạo lực chèo nhẹ trong nước
+          if (u >= 0.58 && u <= 0.82) {
+            const finZone = Math.sin(((u - 0.58) / 0.24) * Math.PI);
+            const finRowing = Math.sin(fish.swimPhase * 1.4);
+            sliceH = h * (1.0 + 0.055 * finRowing * finZone);
+          }
+        } else {
+          // 3. QUẨY ĐUÔI (Caudal Peduncle & Flowing Tail Fin Wag):
+          // tailT: 0.0 tại cuống đuôi, 1.0 tại chóp đuôi lụa mềm mại
+          const tailT = (TAIL_START_U - u) / TAIL_START_U;
+          const tailProgress = Math.pow(tailT, 1.25);
 
-      // Slice tangent angle from wave derivative + trailing fin lag (strictly 0 at head)
-      const waveAngle = Math.cos(wavePhase) * (0.28 * Math.pow(1.0 - u, 1.1)) +
-        (u < 0.38 ? Math.cos(wavePhase - 0.9) * 0.12 * Math.pow((0.38 - u) / 0.38, 1.2) : 0);
+          // Sóng quẫy đuôi chính với biên độ dạt sang hai bên uyển chuyển
+          const tailWave = Math.sin(fish.swimPhase - tailT * 2.1);
+          const tailSwing = tailWave * (h * 0.38) * tailProgress;
 
-      // Combined lateral deflection and angular rotation (both are 0 at head, keeping head pointing straight forward)
-      const lateralY = turnLateral + chestFlex + bellyFlex + tailSwing + finRipple;
-      const sliceAngle = turnAngle + waveAngle;
+          // Nếp gấp đuôi voan lụa gợn sóng mềm mại (secondary veil ripple)
+          const veilRipple = Math.sin(fish.swimPhase * 1.5 - tailT * 3.4) * (h * 0.15) * Math.pow(tailT, 1.5);
+
+          // Bẻ lái theo cua nước khi rẽ cua
+          const tailRudder = turnBend * (len * 0.16) * Math.pow(tailT, 1.35);
+
+          lateralY = tailSwing + veilRipple + tailRudder;
+
+          // Góc nghiêng lát cắt uốn theo dòng nước mềm mại
+          const tailAngle = Math.cos(fish.swimPhase - tailT * 2.1) * 0.48 * Math.pow(tailT, 0.92)
+            - turnBend * 0.38 * Math.pow(tailT, 1.15);
+
+          sliceAngle = bodyRecoil + tailAngle;
+        }
+      } else {
+        // ===================================================================
+        // DÁNG BƠI CÁ KOI / CÁ CHÉP / CÁ RỒNG (SLENDER BODY):
+        // Uốn lượn hình chữ S toàn thân mềm mại
+        // ===================================================================
+        // 1. Dynamic Turn Arc Curvature:
+        // The spine flexes progressively behind the head into a supple, organic C-curve along the turning arc
+        const turnLateral = turnBend * (len * 0.17 + h * 0.35) * Math.sin(bendProgress * Math.PI * 0.55) * Math.pow(bendProgress, 1.25);
+        const turnAngle = -turnBend * 0.75 * Math.pow(bendProgress, 1.25);
+
+        // 2. Multi-Harmonic Traveling Undulation Wave (propelling from behind head down to tail):
+        const wavePhase = fish.swimPhase - (1.0 - u) * 3.7;
+
+        // Chest & pectoral area flexible breathing motion (fades to 0 at head tip)
+        const chestFlex = Math.sin((1.0 - u) * Math.PI * 1.3) * (h * 0.04) * Math.sin(wavePhase + 0.6) * Math.pow(1.0 - u, 0.6);
+
+        // Mid-trunk belly flex (fades to 0 at head tip)
+        const bellyFlex = Math.sin((1.0 - u) * Math.PI * 0.95) * (h * 0.08) * Math.sin(wavePhase) * Math.pow(1.0 - u, 0.8);
+
+        // Caudal peduncle & main tail stroke (power propulsion)
+        const tailSwing = Math.pow(1.0 - u, 1.45) * (h * 0.28) * Math.sin(wavePhase);
+
+        // Trailing soft fin ripple (supple "veil" flutter on tail fins)
+        const finRipple = u < 0.38
+          ? Math.sin(wavePhase - 0.9) * (h * 0.09) * Math.pow((0.38 - u) / 0.38, 1.4)
+          : 0;
+
+        // Slice tangent angle from wave derivative + trailing fin lag (strictly 0 at head)
+        const waveAngle = Math.cos(wavePhase) * (0.28 * Math.pow(1.0 - u, 1.1)) +
+          (u < 0.38 ? Math.cos(wavePhase - 0.9) * 0.12 * Math.pow((0.38 - u) / 0.38, 1.2) : 0);
+
+        // Combined lateral deflection and angular rotation
+        lateralY = turnLateral + chestFlex + bellyFlex + tailSwing + finRipple;
+        sliceAngle = turnAngle + waveAngle;
+      }
 
       // Local X position of slice center: head is at 0, body trails behind toward -len
       const sliceCenterX = (i - NUM_SLICES + 0.5) * destSliceW;
@@ -577,7 +958,7 @@ export class KoiPondLayer {
       ctx.drawImage(
         sourceCanvas,
         i * srcSliceW, 0, srcSliceW, srcH,
-        -destSliceW * 0.5 - overlap * 0.5, -h * 0.5, destSliceW + overlap, h
+        -destSliceW * 0.5 - overlap * 0.5, -sliceH * 0.5, destSliceW + overlap, sliceH
       );
 
       ctx.restore();

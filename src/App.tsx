@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { WaterRippleEngine, WaterOptions } from './webgl/WaterRippleEngine';
 import { KoiPondLayer, FISH_SPECIES } from './components/KoiPond';
+import { RainEffect, RainIntensity } from './components/RainEffect';
 import { waterAudio } from './utils/audio';
 import {
   DEFAULT_BACKGROUND_URL,
@@ -33,8 +34,10 @@ import {
 
 export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rainCanvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<WaterRippleEngine | null>(null);
   const pondLayerRef = useRef<KoiPondLayer | null>(null);
+  const rainEffectRef = useRef<RainEffect | null>(null);
 
   // Background state
   const [currentBgUrl, setCurrentBgUrl] = useState<string>(DEFAULT_BACKGROUND_URL);
@@ -59,11 +62,14 @@ export default function App() {
   });
 
   // Environment & interactive features
-  const [rainMode, setRainMode] = useState<boolean>(false);
-  const [rainFrequency, setRainFrequency] = useState<number>(350); // ms per raindrop
+  const [rainMode, setRainMode] = useState<boolean>(true); // Khởi động với hiệu ứng mưa rơi sống động
+  const [rainIntensity, setRainIntensity] = useState<RainIntensity>('medium');
+  const [rainWind, setRainWind] = useState<number>(12); // Gió nghiêng 12 độ
   const [showFish, setShowFish] = useState<boolean>(true);
   const [fishCount, setFishCount] = useState<number>(5);
   const [selectedSpecies, setSelectedSpecies] = useState<number | 'all'>('all');
+  const [showTurtles, setShowTurtles] = useState<boolean>(true);
+  const [turtleCount, setTurtleCount] = useState<number>(2);
   const [showLilies, setShowLilies] = useState<boolean>(true);
   const [lilyCount, setLilyCount] = useState<number>(12); // Tăng số lượng lá sen lên 12 lá
   const [isMuted, setIsMuted] = useState<boolean>(true);
@@ -93,10 +99,28 @@ export default function App() {
     const pondLayer = new KoiPondLayer(1024, 1024);
     pondLayerRef.current = pondLayer;
     pondLayer.showFish = showFish;
+    pondLayer.showTurtles = showTurtles;
     pondLayer.showLilies = showLilies;
     pondLayer.setFishCount(fishCount);
+    pondLayer.setTurtleCount(turtleCount);
 
-
+    // 2b. Create Visual Raindrop Effect Layer
+    const rainCanvas = rainCanvasRef.current;
+    let rainEffect: RainEffect | null = null;
+    if (rainCanvas) {
+      rainEffect = new RainEffect(rainCanvas);
+      rainEffectRef.current = rainEffect;
+      rainEffect.active = rainMode;
+      rainEffect.setIntensity(rainIntensity);
+      rainEffect.options.windAngle = (rainWind * Math.PI) / 180;
+      rainEffect.onDropContact = (normX, normY, strength, radius) => {
+        if (engineRef.current) {
+          engineRef.current.addDropInternal(normX, normY, strength, radius);
+          const panX = normX * 2 - 1;
+          waterAudio.playRainPatter(panX);
+        }
+      };
+    }
 
     // Link engine drop to audio synthesis
     engine.onDropAdded = (normX, _normY, strength) => {
@@ -126,13 +150,15 @@ export default function App() {
       const h = window.innerHeight;
       engine.resize(w, h);
       pondLayer.resize(Math.min(w, 1440), Math.min(h, 1440));
+      if (rainEffect) {
+        rainEffect.resize(w, h);
+      }
     };
     handleResize();
     window.addEventListener('resize', handleResize);
 
     // 6. Main Render Loop (60 FPS)
     let animationId: number;
-    let lastTime = performance.now();
     let frameCount = 0;
     let fpsTimer = performance.now();
 
@@ -143,6 +169,11 @@ export default function App() {
 
       // Render WebGL water simulation with displacement, refraction & specular highlights
       engine.render(pondLayer.canvas);
+
+      // Render visual falling raindrops and surface splashes
+      if (rainEffectRef.current) {
+        rainEffectRef.current.updateAndRender(currentTime);
+      }
 
       // FPS tracking
       frameCount++;
@@ -160,6 +191,9 @@ export default function App() {
       cancelAnimationFrame(animationId);
       window.removeEventListener('resize', handleResize);
       engine.destroy();
+      if (rainEffect) {
+        rainEffect.clear();
+      }
     };
   }, []);
 
@@ -174,27 +208,32 @@ export default function App() {
   useEffect(() => {
     if (pondLayerRef.current) {
       pondLayerRef.current.showFish = showFish;
+      pondLayerRef.current.showTurtles = showTurtles;
       pondLayerRef.current.showLilies = showLilies;
       pondLayerRef.current.setSpeciesFilter(selectedSpecies);
       pondLayerRef.current.setFishCount(fishCount);
+      pondLayerRef.current.setTurtleCount(turtleCount);
       pondLayerRef.current.setLilyCount(lilyCount);
     }
-  }, [showFish, showLilies, fishCount, lilyCount, selectedSpecies]);
+  }, [showFish, showTurtles, showLilies, fishCount, turtleCount, lilyCount, selectedSpecies]);
 
-  // Handle rain simulation
+  // Sync visual rain simulation settings & atmospheric rain audio
   useEffect(() => {
-    if (!rainMode) return;
-    const interval = setInterval(() => {
-      if (engineRef.current) {
-        const x = 0.05 + Math.random() * 0.9;
-        const y = 0.05 + Math.random() * 0.9;
-        const strength = 0.35 + Math.random() * 0.45;
-        const radius = 0.018 + Math.random() * 0.016;
-        engineRef.current.addDrop(x, y, strength, radius);
+    if (rainEffectRef.current) {
+      rainEffectRef.current.active = rainMode;
+      rainEffectRef.current.setIntensity(rainIntensity);
+      rainEffectRef.current.options.windAngle = (rainWind * Math.PI) / 180;
+      if (!rainMode) {
+        rainEffectRef.current.clear();
       }
-    }, rainFrequency);
-    return () => clearInterval(interval);
-  }, [rainMode, rainFrequency]);
+    }
+
+    if (rainMode && !isMuted) {
+      waterAudio.startRain(rainIntensity);
+    } else {
+      waterAudio.stopRain();
+    }
+  }, [rainMode, rainIntensity, rainWind, isMuted]);
 
   // Load and bind background image
   const loadBackgroundImage = useCallback((url: string) => {
@@ -236,8 +275,29 @@ export default function App() {
     setIsMuted(nextMuted);
     waterAudio.setMuted(nextMuted);
     if (!nextMuted) {
-      // Play a gentle welcome droplet
-      waterAudio.playDrop(0.8, 0);
+      if (rainMode) {
+        waterAudio.startRain(rainIntensity);
+      } else {
+        waterAudio.playDrop(0.8, 0);
+      }
+    } else {
+      waterAudio.stopRain();
+    }
+  };
+
+  // Toggle Rain Mode with immediate sound response
+  const handleToggleRain = () => {
+    const nextRain = !rainMode;
+    setRainMode(nextRain);
+    if (nextRain) {
+      // Khi bật mưa, tự động bật âm thanh nếu đang tắt để người dùng nghe thấy tiếng mưa ngay
+      if (isMuted) {
+        setIsMuted(false);
+        waterAudio.setMuted(false);
+      }
+      waterAudio.startRain(rainIntensity);
+    } else {
+      waterAudio.stopRain();
     }
   };
 
@@ -271,6 +331,12 @@ export default function App() {
         ref={canvasRef}
         className="absolute inset-0 w-full h-full cursor-pointer z-0"
         style={{ touchAction: 'none' }}
+      />
+
+      {/* 1b. Realistic Visual Raindrop Overlay Canvas */}
+      <canvas
+        ref={rainCanvasRef}
+        className="absolute inset-0 w-full h-full pointer-events-none z-10"
       />
 
       {/* 2. Top Bar (Three-Zone Strict Header Contract) */}
@@ -720,14 +786,14 @@ export default function App() {
                 <div className="flex items-center gap-2.5">
                   <CloudRain className={`w-4 h-4 ${rainMode ? 'text-cyan-400' : 'text-slate-400'}`} />
                   <div>
-                    <span className="font-medium text-white block">Chế độ Mưa rơi</span>
+                    <span className="font-medium text-white block">Hiệu ứng Hạt mưa rơi</span>
                     <span className="text-[11px] text-slate-400">
-                      Tự động thả các giọt nước ngẫu nhiên tạo gợn sóng
+                      Vệt mưa rơi xiên, sóng loang lóa & bọt nước bắn tung tóe
                     </span>
                   </div>
                 </div>
                 <button
-                  onClick={() => setRainMode(!rainMode)}
+                  onClick={handleToggleRain}
                   className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
                     rainMode ? 'bg-cyan-500' : 'bg-slate-700'
                   }`}
@@ -741,22 +807,66 @@ export default function App() {
               </div>
 
               {rainMode && (
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-slate-300 font-medium">Tốc độ hạt mưa rơi</span>
-                    <span className="font-mono text-cyan-300 tabular-nums">
-                      {rainFrequency} ms
-                    </span>
+                <div className="space-y-3 p-3 bg-slate-900/50 border border-white/10 rounded-xl">
+                  {/* Intensity selection */}
+                  <div>
+                    <span className="text-slate-300 font-medium block mb-1.5">Mức độ mưa</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => setRainIntensity('light')}
+                        className={`py-1.5 px-2 rounded-lg text-center transition-colors font-medium text-xs ${
+                          rainIntensity === 'light'
+                            ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Mưa phùn
+                      </button>
+                      <button
+                        onClick={() => setRainIntensity('medium')}
+                        className={`py-1.5 px-2 rounded-lg text-center transition-colors font-medium text-xs ${
+                          rainIntensity === 'medium'
+                            ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Mưa vừa
+                      </button>
+                      <button
+                        onClick={() => setRainIntensity('heavy')}
+                        className={`py-1.5 px-2 rounded-lg text-center transition-colors font-medium text-xs ${
+                          rainIntensity === 'heavy'
+                            ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        Mưa rào
+                      </button>
+                    </div>
                   </div>
-                  <input
-                    type="range"
-                    min="100"
-                    max="800"
-                    step="50"
-                    value={rainFrequency}
-                    onChange={(e) => setRainFrequency(parseInt(e.target.value, 10))}
-                    className="w-full accent-cyan-400"
-                  />
+
+                  {/* Wind Direction Slider */}
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-slate-300 font-medium">Hướng gió hạt mưa rơi</span>
+                      <span className="font-mono text-cyan-300 tabular-nums">
+                        {rainWind > 0 ? `+${rainWind}° (nghiêng phải)` : rainWind < 0 ? `${rainWind}° (nghiêng trái)` : '0° (thẳng đứng)'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="-30"
+                      max="30"
+                      step="2"
+                      value={rainWind}
+                      onChange={(e) => setRainWind(parseInt(e.target.value, 10))}
+                      className="w-full accent-cyan-400"
+                    />
+                  </div>
+
+                  <span className="text-[11px] text-slate-400 block leading-relaxed">
+                    Hạt mưa rơi với hiệu ứng vệt chuyển động ánh sáng (motion blur), tạo vòng sóng loang lóa (splash rings) và bọt nước li ti bắn lên khi chạm mặt hồ.
+                  </span>
                 </div>
               )}
 
@@ -767,7 +877,7 @@ export default function App() {
                   <div>
                     <span className="font-medium text-white block">Đàn cá cảnh thủy sinh</span>
                     <span className="text-[11px] text-slate-400">
-                      7 loài cá cảnh tuyệt đẹp: Koi Kohaku, Showa, Vàng ba đuôi, Chép đỏ, La Hán, Hắc Long vây dài
+                      11 loài cá cảnh tuyệt đẹp: Koi Kohaku, Showa, Vàng ba đuôi, Chép đỏ, La Hán, Hắc Long, Đầu lân Oranda, Lưu Kim, Đuôi Bướm, Vây Lụa Thủy Mặc
                     </span>
                   </div>
                 </div>
@@ -795,7 +905,7 @@ export default function App() {
                     <input
                       type="range"
                       min="1"
-                      max="10"
+                      max="14"
                       step="1"
                       value={fishCount}
                       onChange={(e) => setFishCount(parseInt(e.target.value, 10))}
@@ -817,7 +927,7 @@ export default function App() {
                       >
                         <div className="flex items-center gap-2">
                           <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                          <span className="font-medium">Tất cả 7 loài xen kẽ (Vườn thủy sinh)</span>
+                          <span className="font-medium">Tất cả 11 loài xen kẽ (Vườn thủy sinh phong phú)</span>
                         </div>
                         {selectedSpecies === 'all' && <Check className="w-3.5 h-3.5 text-amber-400" />}
                       </button>
@@ -853,6 +963,58 @@ export default function App() {
                       </div>
                     </div>
                   </div>
+                </div>
+              )}
+
+              {/* Turtle Ecosystem Section */}
+              <div className="flex items-center justify-between p-3 bg-slate-900/60 border border-white/10 rounded-xl">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 bg-emerald-950/60 rounded-lg border border-emerald-500/30 flex items-center justify-center overflow-hidden shrink-0">
+                    <img
+                      src="/assets/turtle.png"
+                      alt="Rùa cảnh"
+                      className="w-full h-full object-contain p-0.5 -rotate-90"
+                    />
+                  </div>
+                  <div>
+                    <span className="font-medium text-white block">Rùa biển xanh (Sea Turtle)</span>
+                    <span className="text-[11px] text-slate-400">
+                      Rùa quẫy vây bơi lội thanh bình cùng đàn cá
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowTurtles(!showTurtles)}
+                  className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors ${
+                    showTurtles ? 'bg-emerald-500' : 'bg-slate-700'
+                  }`}
+                >
+                  <div
+                    className={`bg-white w-4 h-4 rounded-full shadow-md transform transition-transform ${
+                      showTurtles ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {showTurtles && (
+                <div className="p-3 bg-slate-900/40 border border-white/10 rounded-xl space-y-2">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-slate-300 font-medium">Số lượng rùa trong hồ</span>
+                    <span className="font-mono text-emerald-400 tabular-nums">{turtleCount} con</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="1"
+                    max="5"
+                    step="1"
+                    value={turtleCount}
+                    onChange={(e) => setTurtleCount(parseInt(e.target.value, 10))}
+                    className="w-full accent-emerald-400"
+                  />
+                  <span className="text-[11px] text-slate-400 block">
+                    Rùa bơi thong dong theo chu kỳ quẫy vây bơi - lướt nước êm ái, có bóng đổ tự nhiên dưới đáy hồ.
+                  </span>
                 </div>
               )}
 
@@ -907,7 +1069,7 @@ export default function App() {
       <footer className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 bg-slate-950/70 backdrop-blur-md border border-white/10 rounded-full shadow-2xl">
         {/* Rain Toggle Button */}
         <button
-          onClick={() => setRainMode(!rainMode)}
+          onClick={handleToggleRain}
           className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${
             rainMode
               ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50'

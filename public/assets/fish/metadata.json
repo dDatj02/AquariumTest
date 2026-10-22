@@ -61,5 +61,41 @@
     "width": 542,
     "height": 183,
     "aspectRatio": 2.9617486338797816
+  },
+  {
+    "id": 7,
+    "name": "oranda",
+    "label": "Cá Vàng Đầu Lân (Oranda Crown)",
+    "url": "/assets/fish/fish_7.png",
+    "width": 450,
+    "height": 302,
+    "aspectRatio": 1.490066225165563
+  },
+  {
+    "id": 8,
+    "name": "ryukin",
+    "label": "Cá Vàng Lưu Kim (Ryukin Calico)",
+    "url": "/assets/fish/fish_8.png",
+    "width": 450,
+    "height": 335,
+    "aspectRatio": 1.3432835820895523
+  },
+  {
+    "id": 9,
+    "name": "butterfly_fantail",
+    "label": "Cá Vàng Đuôi Bướm (Golden Butterfly)",
+    "url": "/assets/fish/fish_9.png",
+    "width": 450,
+    "height": 263,
+    "aspectRatio": 1.7110266159695818
+  },
+  {
+    "id": 10,
+    "name": "silk_veiltail",
+    "label": "Cá Vàng Thủy Mặc (Silk Veiltail)",
+    "url": "/assets/fish/fish_10.png",
+    "width": 420,
+    "height": 274,
+    "aspectRatio": 1.5328467153284672
   }
 ]
