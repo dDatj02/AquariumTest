@@ -22,6 +22,9 @@ export interface WaterOptions {
   tintStrength: number; // 0.0 to 0.5
   dropRadius: number; // 0.01 to 0.08
   dropStrength: number; // 0.1 to 1.5
+  requireClick: boolean; // Chỉ tạo sóng khi nhấn giữ chuột/chạm
+  wakeWidth: number; // Độ rộng rẽ sóng (Bow wave width)
+  wakeIntensity: number; // Lực rẽ sóng
 }
 
 export class WaterRippleEngine {
@@ -61,16 +64,19 @@ export class WaterRippleEngine {
 
   // Configurable parameters
   public options: WaterOptions = {
-    damping: 0.988,
+    damping: 0.962, // Sóng tắt dần tự nhiên nhanh hơn
     waveSpeed: 1.85,
     refractionStrength: 0.038,
-    specularStrength: 1.6,
-    specularShininess: 48.0,
-    causticsStrength: 0.45,
+    specularStrength: 1.8,
+    specularShininess: 56.0,
+    causticsStrength: 0.5,
     waterTint: [0.04, 0.22, 0.32],
-    tintStrength: 0.25,
-    dropRadius: 0.026,
-    dropStrength: 0.65,
+    tintStrength: 0.22,
+    dropRadius: 0.018, // Giọt nước nhẹ hơn
+    dropStrength: 0.30, // Lực giọt êm dịu hơn
+    requireClick: true, // Chỉ tạo sóng khi nhấn giữ chuột
+    wakeWidth: 0.014, // Độ rộng rẽ sóng gọn gàng ngay tại chuột
+    wakeIntensity: 0.32, // Lực rẽ sóng nhẹ nhàng, êm ái
   };
 
   private animationFrameId: number | null = null;
@@ -436,23 +442,105 @@ export class WaterRippleEngine {
   }
 
   /**
-   * Add a circular water ripple drop at normalized coordinates [0..1]
+   * Thêm một giọt nước tròn (circular ripple) tại tọa độ chuẩn hóa [0..1]
    */
   public addDrop(x: number, y: number, strength?: number, radius?: number): void {
     const str = strength ?? this.options.dropStrength;
     const rad = radius ?? this.options.dropRadius;
+    this.addDropInternal(x, y, str, rad);
+    if (this.onDropAdded) {
+      this.onDropAdded(x, y, str);
+    }
+  }
 
-    // WebGL Y coordinates are inverted compared to DOM clientY
+  /**
+   * Thêm tác động lên lưới mô phỏng không kích hoạt callback âm thanh lặp lại
+   */
+  public addDropInternal(x: number, y: number, strength: number, radius: number): void {
     const glY = 1.0 - y;
-
     if (this.useCpuSim) {
-      this.addDropCpu(x, glY, str, rad);
+      this.addDropCpu(x, glY, strength, radius);
     } else {
-      this.addDropGpu(x, glY, str, rad);
+      this.addDropGpu(x, glY, strength, radius);
+    }
+  }
+
+  /**
+   * Hiệu ứng rẽ sóng chân thực (Bow wave / Kelvin wake parting)
+   * Nước bị rẽ mạnh sang 2 bên tạo sóng hình chữ V, để lại rãnh trũng ở giữa
+   * và gờ sóng cao dâng lên ở 2 bên sườn.
+   */
+  /**
+   * Hiệu ứng rẽ sóng chân thực (Bow wave / Kelvin wake parting)
+   * Nước bị rẽ nhẹ nhàng sang 2 bên ngay tại vị trí kéo chuột theo hướng chuẩn xác,
+   * không bị lệch hướng theo tỉ lệ màn hình.
+   */
+  public addWake(
+    x0: number, y0: number,
+    x1: number, y1: number,
+    strength?: number,
+    wakeWidth?: number
+  ): void {
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const aspect = this.canvas.width / this.canvas.height;
+
+    // Chuyển đổi sang không gian màn hình hiệu chỉnh tỉ lệ khung hình (Aspect-corrected)
+    const dxScreen = dx * aspect;
+    const dyScreen = dy;
+    const distScreen = Math.hypot(dxScreen, dyScreen);
+    if (distScreen < 0.002) return;
+
+    const str = strength ?? this.options.wakeIntensity;
+    const width = wakeWidth ?? this.options.wakeWidth;
+
+    // Vector hướng chuẩn hóa trong không gian màn hình
+    const udx = dxScreen / distScreen;
+    const udy = dyScreen / distScreen;
+
+    // Vector pháp tuyến thực sự vuông góc 90 độ với hướng di chuyển
+    const nx = -udy;
+    const ny = udx;
+
+    // Chuyển đổi offset pháp tuyến trở lại tọa độ UV chuẩn hóa
+    const offsetX = (nx * width) / aspect;
+    const offsetY = ny * width;
+
+    // Số bước nội suy vừa phải (tối đa 3 bước) để sóng êm ái, nhẹ nhàng, không bị tích tụ quá mức
+    const steps = Math.max(1, Math.min(3, Math.ceil(distScreen / 0.012)));
+
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const px = x0 + dx * t;
+      const py = y0 + dy * t;
+
+      // 1. Sóng rẽ nhẹ sang sườn trái
+      this.addDropInternal(
+        px + offsetX,
+        py + offsetY,
+        str * 0.40,
+        width * 1.05
+      );
+
+      // 2. Sóng rẽ nhẹ sang sườn phải
+      this.addDropInternal(
+        px - offsetX,
+        py - offsetY,
+        str * 0.40,
+        width * 1.05
+      );
+
+      // 3. Rãnh sóng trũng ở giữa
+      this.addDropInternal(
+        px,
+        py,
+        -str * 0.20,
+        width * 0.85
+      );
     }
 
     if (this.onDropAdded) {
-      this.onDropAdded(x, y, str);
+      this.onDropAdded(x1, y1, str);
     }
   }
 
@@ -527,8 +615,12 @@ export class WaterRippleEngine {
     gl.bindTexture(gl.TEXTURE_2D, this.waveTextures[readIdx]);
     gl.uniform1i(gl.getUniformLocation(this.simProgram, 'u_waveTexture'), 0);
 
+    // Khi nhấn giữ chuột: sử dụng damping đã cấu hình (sóng lan tỏa tự nhiên)
+    // Khi buông chuột: hạ damping xuống 0.930 để sóng tắt dần nhanh chóng, không bị dư chấn kéo dài
+    const activeDamping = this.isPointerDown ? this.options.damping : Math.min(this.options.damping, 0.930);
+
     gl.uniform2f(gl.getUniformLocation(this.simProgram, 'u_texelSize'), 1.0 / this.simWidth, 1.0 / this.simHeight);
-    gl.uniform1f(gl.getUniformLocation(this.simProgram, 'u_damping'), this.options.damping);
+    gl.uniform1f(gl.getUniformLocation(this.simProgram, 'u_damping'), activeDamping);
     gl.uniform1f(gl.getUniformLocation(this.simProgram, 'u_speed'), this.options.waveSpeed);
 
     this.renderQuad();
@@ -543,14 +635,14 @@ export class WaterRippleEngine {
     const h = this.simHeight;
     const curr = this.cpuReadBuffer;
     const next = this.cpuWriteBuffer;
-    const damping = this.options.damping;
+    const activeDamping = this.isPointerDown ? this.options.damping : Math.min(this.options.damping, 0.930);
 
     // Fast 2D Wave Solver loop
     for (let y = 1; y < h - 1; y++) {
       const row = y * w;
       for (let x = 1; x < w - 1; x++) {
         const idx = row + x;
-        const wave = ((curr[idx - 1] + curr[idx + 1] + curr[idx - w] + curr[idx + w]) * 0.5 - next[idx]) * damping;
+        const wave = ((curr[idx - 1] + curr[idx + 1] + curr[idx - w] + curr[idx + w]) * 0.5 - next[idx]) * activeDamping;
         next[idx] = wave;
       }
     }
@@ -680,13 +772,19 @@ export class WaterRippleEngine {
       this.isPointerDown = true;
       const pos = getNormalizedPos(e);
       this.lastPointerPos = pos;
-      // Energetic click splash
-      this.addDrop(pos.x, pos.y, this.options.dropStrength * 1.5, this.options.dropRadius * 1.3);
+      // Giọt nước nhẹ nhàng êm ái ngay tại điểm nhấn chuột
+      this.addDrop(pos.x, pos.y, this.options.dropStrength * 0.75, this.options.dropRadius * 0.95);
     });
 
     // Pointer Move
     canvas.addEventListener('pointermove', (e) => {
       const pos = getNormalizedPos(e);
+
+      // YÊU CẦU: Chỉ khi nhấn giữ chuột/chạm thì mới tạo hiệu ứng lướt tay
+      if (this.options.requireClick && !this.isPointerDown) {
+        this.lastPointerPos = pos;
+        return;
+      }
 
       if (!this.lastPointerPos) {
         this.lastPointerPos = pos;
@@ -697,12 +795,18 @@ export class WaterRippleEngine {
       const dy = pos.y - this.lastPointerPos.y;
       const dist = Math.hypot(dx, dy);
 
-      // Add ripples when moving (stronger ripples if pointer is pressed)
-      const minDistance = this.isPointerDown ? 0.008 : 0.012;
+      // Ngưỡng tối thiểu để kích hoạt rẽ sóng
+      const minDistance = 0.0035;
       if (dist > minDistance) {
-        const strength = this.isPointerDown ? this.options.dropStrength * 0.9 : this.options.dropStrength * 0.35;
-        const radius = this.isPointerDown ? this.options.dropRadius * 1.1 : this.options.dropRadius * 0.75;
-        this.addDrop(pos.x, pos.y, strength, radius);
+        // Tạo hiệu ứng rẽ sóng hình chữ V hai bên luồng di chuyển
+        this.addWake(
+          this.lastPointerPos.x,
+          this.lastPointerPos.y,
+          pos.x,
+          pos.y,
+          this.options.wakeIntensity,
+          this.options.wakeWidth
+        );
         this.lastPointerPos = pos;
       }
     });

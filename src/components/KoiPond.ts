@@ -1,7 +1,7 @@
 /**
  * Underwater Pond Layer:
- * Renders the pond floor image, swimming Japanese Koi fish with realistic spine kinematics,
- * and drifting water lily leaves.
+ * Renders the lake bed floor image, swimming Japanese Koi fish with realistic spine kinematics,
+ * and drifting water lily / lotus pads.
  * Output is drawn onto an offscreen canvas and uploaded to WebGL 2 as the displacement background!
  */
 
@@ -32,7 +32,9 @@ export interface LilyPad {
   vx: number;
   vy: number;
   cutAngle: number;
+  colorVariant: number; // slight hue variance
   flowerColor?: string;
+  hasBud?: boolean;
 }
 
 export class KoiPondLayer {
@@ -48,9 +50,6 @@ export class KoiPondLayer {
   public showLilies: boolean = true;
   private lastTime: number = 0;
 
-  // Callback to emit water ripples when fish swish their tails near surface
-  public onFishRipple?: (x: number, y: number, strength: number, radius: number) => void;
-
   constructor(width = 1024, height = 1024) {
     this.width = width;
     this.height = height;
@@ -64,7 +63,7 @@ export class KoiPondLayer {
     this.ctx = context;
 
     this.initFish(4);
-    this.initLilies(4);
+    this.initLilies(12); // Tăng số lượng lá sen mặc định lên 12 lá
   }
 
   public resize(w: number, h: number) {
@@ -73,6 +72,7 @@ export class KoiPondLayer {
     this.height = Math.max(256, Math.min(2048, h));
     this.canvas.width = this.width;
     this.canvas.height = this.height;
+    this.initLilies(this.lilies.length || 12);
   }
 
   public setBackgroundImage(img: HTMLImageElement) {
@@ -88,6 +88,11 @@ export class KoiPondLayer {
     while (this.fishList.length > target) {
       this.fishList.pop();
     }
+  }
+
+  public setLilyCount(count: number) {
+    const target = Math.max(0, Math.min(25, count));
+    this.initLilies(target);
   }
 
   private createFish(): KoiFish {
@@ -134,19 +139,76 @@ export class KoiPondLayer {
     }
   }
 
+  /**
+   * Tạo số lượng lá sen phong phú, tự nhiên theo từng cụm (clusters)
+   * Giữ lòng hồ thoáng đãng để cá bơi và sóng nước lan tỏa đẹp mắt
+   */
   private initLilies(count: number) {
     this.lilies = [];
+    if (count <= 0) return;
+
+    // Các cụm tâm tự nhiên ven bờ hồ
+    const clusters = [
+      { cx: 0.18, cy: 0.22, radius: 0.18 }, // Cụm góc trên trái
+      { cx: 0.82, cy: 0.25, radius: 0.18 }, // Cụm góc trên phải
+      { cx: 0.20, cy: 0.78, radius: 0.20 }, // Cụm góc dưới trái
+      { cx: 0.80, cy: 0.75, radius: 0.20 }, // Cụm góc dưới phải
+      { cx: 0.50, cy: 0.15, radius: 0.15 }, // Cụm viền trên
+    ];
+
     for (let i = 0; i < count; i++) {
+      // 75% lá phân bố theo các cụm tự nhiên, 25% trôi dạt ngẫu nhiên
+      let x: number, y: number;
+      if (Math.random() < 0.75 && clusters.length > 0) {
+        const cl = clusters[i % clusters.length];
+        const r = Math.random() * cl.radius;
+        const ang = Math.random() * Math.PI * 2;
+        x = (cl.cx + Math.cos(ang) * r) * this.width;
+        y = (cl.cy + Math.sin(ang) * r) * this.height;
+      } else {
+        x = (0.1 + Math.random() * 0.8) * this.width;
+        y = (0.1 + Math.random() * 0.8) * this.height;
+      }
+
+      // Đa dạng kích thước lá từ nhỏ xinh đến lá sen lớn trưởng thành
+      const sizeType = Math.random();
+      let radius: number;
+      if (sizeType < 0.35) {
+        radius = 20 + Math.random() * 12; // Lá sen non
+      } else if (sizeType < 0.8) {
+        radius = 34 + Math.random() * 16; // Lá sen vừa
+      } else {
+        radius = 52 + Math.random() * 16; // Lá sen lớn
+      }
+
+      // Hoa sen nở trên các lá sen lớn (khoảng 25% số lá)
+      let flowerColor: string | undefined;
+      let hasBud: boolean | undefined;
+
+      if (radius > 36 && Math.random() < 0.32) {
+        const flowerRnd = Math.random();
+        if (flowerRnd < 0.5) {
+          flowerColor = '#f472b6'; // Hoa sen hồng phai
+        } else if (flowerRnd < 0.8) {
+          flowerColor = '#f8fafc'; // Hoa súng trắng thanh tao
+        } else {
+          hasBud = true; // Búp sen e ấp
+          flowerColor = '#ec4899';
+        }
+      }
+
       this.lilies.push({
-        x: (0.15 + Math.random() * 0.7) * this.width,
-        y: (0.15 + Math.random() * 0.7) * this.height,
-        radius: 28 + Math.random() * 26,
+        x,
+        y,
+        radius,
         rotation: Math.random() * Math.PI * 2,
-        vRot: (Math.random() - 0.5) * 0.002,
-        vx: (Math.random() - 0.5) * 0.1,
-        vy: (Math.random() - 0.5) * 0.1,
-        cutAngle: 0.35 + Math.random() * 0.2,
-        flowerColor: i % 2 === 0 ? (i === 0 ? '#ffb7c5' : '#ffffff') : undefined,
+        vRot: (Math.random() - 0.5) * 0.0015,
+        vx: (Math.random() - 0.5) * 0.08,
+        vy: (Math.random() - 0.5) * 0.08,
+        cutAngle: 0.32 + Math.random() * 0.22,
+        colorVariant: Math.random(),
+        flowerColor,
+        hasBud,
       });
     }
   }
@@ -178,13 +240,12 @@ export class KoiPondLayer {
         fish.targetAngle += (Math.random() - 0.5) * 1.4;
       }
 
-      // Curious attraction or gentle avoidance
+      // Curious attraction
       if (pointerX !== undefined && pointerY !== undefined) {
         const pdx = pointerX - fish.x;
         const pdy = pointerY - fish.y;
         const pDist = Math.hypot(pdx, pdy);
         if (pDist < 160 && pDist > 40) {
-          // Slow approach
           const approach = Math.atan2(pdy, pdx);
           fish.targetAngle = approach * 0.2 + fish.targetAngle * 0.8;
         }
@@ -229,17 +290,9 @@ export class KoiPondLayer {
         curr.x = prev.x + dx * factor;
         curr.y = prev.y + dy * factor;
       }
-
-      // Fish tail swish emits subtle water ripples when near surface
-      if (fish.depth < 0.45 && fish.speed > 2.0 && Math.random() < 0.25) {
-        const tail = fish.spine[fish.numSegments - 1];
-        if (this.onFishRipple) {
-          this.onFishRipple(tail.x / this.width, tail.y / this.height, 0.08, 0.025);
-        }
-      }
     }
 
-    // Update lily pads drifting
+    // Update lily pads drifting gently with subtle bobbing
     for (const lily of this.lilies) {
       lily.rotation += lily.vRot;
       lily.x += lily.vx;
@@ -254,9 +307,8 @@ export class KoiPondLayer {
   public render(): void {
     const { ctx, width, height } = this;
 
-    // 1. Draw Pond Bottom Image (tiled or scaled to fill)
+    // 1. Draw Pond Bottom Image (Đáy hồ / Soil background)
     if (this.isBgLoaded && this.bgImage) {
-      // Draw background keeping natural ratio, centered and covered
       const img = this.bgImage;
       const imgAspect = img.width / img.height;
       const canvasAspect = width / height;
@@ -275,7 +327,6 @@ export class KoiPondLayer {
       }
       ctx.drawImage(img, drawX, drawY, drawW, drawH);
     } else {
-      // Elegant natural pebble/mud gradient fallback
       const grad = ctx.createLinearGradient(0, 0, width, height);
       grad.addColorStop(0, '#3b2f27');
       grad.addColorStop(0.5, '#4a3b31');
@@ -295,7 +346,7 @@ export class KoiPondLayer {
       }
     }
 
-    // 4. Render Floating Lilies
+    // 4. Render Floating Lotus / Lily Pads
     if (this.showLilies) {
       for (const lily of this.lilies) {
         this.renderLilyPad(ctx, lily);
@@ -317,7 +368,6 @@ export class KoiPondLayer {
 
   private renderFishBody(ctx: CanvasRenderingContext2D, fish: KoiFish) {
     ctx.save();
-    // Submerged depth haze
     ctx.globalAlpha = 0.95 - fish.depth * 0.2;
 
     const baseColors: Record<KoiFish['type'], { main: string; pattern: string; accent: string }> = {
@@ -336,7 +386,7 @@ export class KoiPondLayer {
     ctx.fillStyle = col.main;
     ctx.fill();
 
-    // Secondary colored pattern spots on the fish back (Kohaku crimson / Showa black)
+    // Secondary colored pattern spots
     this.drawFishMarkings(ctx, fish, col.pattern, col.accent);
 
     // Dorsal Fin along spine
@@ -389,13 +439,11 @@ export class KoiPondLayer {
     }
 
     ctx.beginPath();
-    // Head cap curve
     ctx.moveTo(leftPts[0].x, leftPts[0].y);
     const headTipX = spine[0].x + Math.cos(fish.angle) * fish.size * 0.22;
     const headTipY = spine[0].y + Math.sin(fish.angle) * fish.size * 0.22;
     ctx.quadraticCurveTo(headTipX, headTipY, rightPts[0].x, rightPts[0].y);
 
-    // Right body side
     for (let i = 1; i < len; i++) {
       ctx.lineTo(rightPts[i].x, rightPts[i].y);
     }
@@ -411,10 +459,14 @@ export class KoiPondLayer {
     const perpA = tailAngle + Math.PI / 2;
 
     ctx.lineTo(tX - Math.cos(perpA) * fSpread, tY - Math.sin(perpA) * fSpread);
-    ctx.quadraticCurveTo(tailBase.x + Math.cos(tailAngle) * (finLen * 0.5), tailBase.y + Math.sin(tailAngle) * (finLen * 0.5), tX + Math.cos(perpA) * fSpread, tY + Math.sin(perpA) * fSpread);
+    ctx.quadraticCurveTo(
+      tailBase.x + Math.cos(tailAngle) * (finLen * 0.5),
+      tailBase.y + Math.sin(tailAngle) * (finLen * 0.5),
+      tX + Math.cos(perpA) * fSpread,
+      tY + Math.sin(perpA) * fSpread
+    );
     ctx.lineTo(leftPts[len - 1].x, leftPts[len - 1].y);
 
-    // Left body side back to snout
     for (let i = len - 2; i >= 0; i--) {
       ctx.lineTo(leftPts[i].x, leftPts[i].y);
     }
@@ -457,17 +509,15 @@ export class KoiPondLayer {
   }
 
   private drawFishMarkings(ctx: CanvasRenderingContext2D, fish: KoiFish, patternColor: string, accentColor: string) {
-    if (fish.type === 'yamabuki') return; // Solid golden koi
+    if (fish.type === 'yamabuki') return;
 
     ctx.save();
-    // Head marking
     const h = fish.spine[1];
     ctx.fillStyle = patternColor;
     ctx.beginPath();
     ctx.arc(h.x, h.y, fish.size * 0.16, 0, Math.PI * 2);
     ctx.fill();
 
-    // Mid-body blotches
     const m1 = fish.spine[3];
     ctx.beginPath();
     ctx.ellipse(m1.x, m1.y, fish.size * 0.22, fish.size * 0.14, fish.angle, 0, Math.PI * 2);
@@ -502,36 +552,51 @@ export class KoiPondLayer {
 
     ctx.save();
     ctx.fillStyle = '#0f172a';
-    // Left eye
     ctx.beginPath();
     ctx.arc(head.x + Math.cos(perpA) * eyeDist, head.y + Math.sin(perpA) * eyeDist, 2.2, 0, Math.PI * 2);
     ctx.fill();
-    // Right eye
     ctx.beginPath();
     ctx.arc(head.x - Math.cos(perpA) * eyeDist, head.y - Math.sin(perpA) * eyeDist, 2.2, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
 
+  /**
+   * Vẽ lá sen / hoa sen chân thực với đổ bóng sâu, gân lá tinh xảo và cánh hoa xếp lớp
+   */
   private renderLilyPad(ctx: CanvasRenderingContext2D, lily: LilyPad) {
-    // Shadow
+    // 1. Soft Ambient Shadow onto underwater floor
     ctx.save();
-    ctx.translate(lily.x + 10, lily.y + 14);
-    ctx.fillStyle = 'rgba(10, 15, 20, 0.3)';
+    ctx.translate(lily.x + 12, lily.y + 16);
+    ctx.fillStyle = 'rgba(8, 12, 16, 0.35)';
     ctx.beginPath();
     ctx.arc(0, 0, lily.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
-    // Pad
+    // 2. Lotus Leaf Body
     ctx.save();
     ctx.translate(lily.x, lily.y);
     ctx.rotate(lily.rotation);
 
-    const grad = ctx.createRadialGradient(-lily.radius * 0.2, -lily.radius * 0.2, lily.radius * 0.1, 0, 0, lily.radius);
-    grad.addColorStop(0, '#38a169');
-    grad.addColorStop(0.7, '#276749');
-    grad.addColorStop(1, '#1c4532');
+    // Natural emerald to deep forest jade gradient
+    const grad = ctx.createRadialGradient(
+      -lily.radius * 0.2, -lily.radius * 0.2, lily.radius * 0.08,
+      0, 0, lily.radius
+    );
+    if (lily.colorVariant < 0.33) {
+      grad.addColorStop(0, '#4ade80'); // Fresh spring lotus green
+      grad.addColorStop(0.65, '#16a34a');
+      grad.addColorStop(1, '#14532d');
+    } else if (lily.colorVariant < 0.66) {
+      grad.addColorStop(0, '#38a169');
+      grad.addColorStop(0.7, '#276749');
+      grad.addColorStop(1, '#1c4532');
+    } else {
+      grad.addColorStop(0, '#34d399'); // Emerald jade
+      grad.addColorStop(0.7, '#059669');
+      grad.addColorStop(1, '#064e3b');
+    }
 
     ctx.fillStyle = grad;
     ctx.beginPath();
@@ -540,30 +605,67 @@ export class KoiPondLayer {
     ctx.closePath();
     ctx.fill();
 
-    // Leaf veins
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    // Subtle sunlit rim around edge of leaf
+    ctx.strokeStyle = 'rgba(187, 247, 208, 0.25)';
     ctx.lineWidth = 1.2;
-    for (let a = 0.5; a < Math.PI * 2 - 0.5; a += 0.8) {
+    ctx.stroke();
+
+    // Delicate radiating leaf veins
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.20)';
+    ctx.lineWidth = 1.1;
+    for (let a = lily.cutAngle + 0.3; a < Math.PI * 2 - lily.cutAngle - 0.2; a += 0.55) {
       ctx.beginPath();
       ctx.moveTo(0, 0);
-      ctx.lineTo(Math.cos(a) * lily.radius * 0.85, Math.sin(a) * lily.radius * 0.85);
+      const endX = Math.cos(a) * lily.radius * 0.9;
+      const endY = Math.sin(a) * lily.radius * 0.9;
+      const cpX = Math.cos(a + 0.08) * lily.radius * 0.5;
+      const cpY = Math.sin(a + 0.08) * lily.radius * 0.5;
+      ctx.quadraticCurveTo(cpX, cpY, endX, endY);
       ctx.stroke();
     }
 
-    // Flower blossom if present
+    // Leaf center depression node
+    ctx.fillStyle = '#14532d';
+    ctx.beginPath();
+    ctx.arc(0, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. Blooming Lotus Flower or Bud if present
     if (lily.flowerColor) {
-      ctx.fillStyle = lily.flowerColor;
-      for (let p = 0; p < 8; p++) {
-        const pAng = (p / 8) * Math.PI * 2;
+      if (lily.hasBud) {
+        // E ấp búp sen
+        ctx.fillStyle = lily.flowerColor;
         ctx.beginPath();
-        ctx.ellipse(Math.cos(pAng) * 6, Math.sin(pAng) * 6, 8, 4, pAng, 0, Math.PI * 2);
+        ctx.ellipse(0, 0, 9, 5, Math.PI / 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#fbcfe8';
+        ctx.beginPath();
+        ctx.ellipse(1, -1, 6, 3, Math.PI / 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // Hoa sen nở rực rỡ với nhiều lớp cánh
+        const numPetals = 10;
+        ctx.fillStyle = lily.flowerColor;
+        for (let p = 0; p < numPetals; p++) {
+          const pAng = (p / numPetals) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.ellipse(Math.cos(pAng) * 7, Math.sin(pAng) * 7, 9, 4.5, pAng, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Lớp cánh trong
+        ctx.fillStyle = lily.flowerColor === '#f472b6' ? '#fbcfe8' : '#ffffff';
+        for (let p = 0; p < 6; p++) {
+          const pAng = (p / 6) * Math.PI * 2 + 0.3;
+          ctx.beginPath();
+          ctx.ellipse(Math.cos(pAng) * 4, Math.sin(pAng) * 4, 6, 3, pAng, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        // Nhụy hoa vàng óng
+        ctx.fillStyle = '#eab308';
+        ctx.beginPath();
+        ctx.arc(0, 0, 4.2, 0, Math.PI * 2);
         ctx.fill();
       }
-      // Yellow center
-      ctx.fillStyle = '#ecc94b';
-      ctx.beginPath();
-      ctx.arc(0, 0, 4, 0, Math.PI * 2);
-      ctx.fill();
     }
 
     ctx.restore();

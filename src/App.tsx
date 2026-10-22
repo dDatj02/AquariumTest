@@ -43,7 +43,7 @@ export default function App() {
 
   // Simulation parameters
   const [options, setOptions] = useState<WaterOptions>({
-    damping: 0.988,
+    damping: 0.962,
     waveSpeed: 1.85,
     refractionStrength: 0.038,
     specularStrength: 1.8,
@@ -51,8 +51,11 @@ export default function App() {
     causticsStrength: 0.5,
     waterTint: [0.04, 0.22, 0.32],
     tintStrength: 0.22,
-    dropRadius: 0.026,
-    dropStrength: 0.7,
+    dropRadius: 0.018,
+    dropStrength: 0.30,
+    requireClick: true, // Chỉ khi nhấn chuột mới lướt rẽ sóng
+    wakeWidth: 0.014,
+    wakeIntensity: 0.32,
   });
 
   // Environment & interactive features
@@ -61,6 +64,7 @@ export default function App() {
   const [showFish, setShowFish] = useState<boolean>(true);
   const [fishCount, setFishCount] = useState<number>(4);
   const [showLilies, setShowLilies] = useState<boolean>(true);
+  const [lilyCount, setLilyCount] = useState<number>(12); // Tăng số lượng lá sen lên 12 lá
   const [isMuted, setIsMuted] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
@@ -91,10 +95,7 @@ export default function App() {
     pondLayer.showLilies = showLilies;
     pondLayer.setFishCount(fishCount);
 
-    // Link fish tail swish to water ripple
-    pondLayer.onFishRipple = (x, y, strength, radius) => {
-      engine.addDrop(x, y, strength, radius);
-    };
+
 
     // Link engine drop to audio synthesis
     engine.onDropAdded = (normX, _normY, strength) => {
@@ -174,8 +175,9 @@ export default function App() {
       pondLayerRef.current.showFish = showFish;
       pondLayerRef.current.showLilies = showLilies;
       pondLayerRef.current.setFishCount(fishCount);
+      pondLayerRef.current.setLilyCount(lilyCount);
     }
-  }, [showFish, showLilies, fishCount]);
+  }, [showFish, showLilies, fishCount, lilyCount]);
 
   // Handle rain simulation
   useEffect(() => {
@@ -337,7 +339,7 @@ export default function App() {
           <div className="flex items-center gap-2.5">
             <Info className="w-4 h-4 text-cyan-400 shrink-0" />
             <span>
-              Di chuyển chuột hoặc vuốt chạm trên màn hình để tạo sóng lan tỏa. Nhấp vào các tab trên để đổi ảnh đáy hồ hoặc chỉnh độ khúc xạ.
+              Nhấn giữ chuột hoặc chạm ngón tay rồi lướt để tạo hiệu ứng <strong>rẽ sóng</strong> (nước tách sang 2 bên). Mặt hồ giữ phẳng lặng khi rê chuột tự do.
             </span>
           </div>
           <button
@@ -612,12 +614,79 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Wake Parting & Click-to-Ripple Settings */}
+              <div className="pt-3 border-t border-white/10 space-y-3">
+                <div className="flex items-center justify-between p-2.5 bg-slate-900/60 border border-white/10 rounded-xl">
+                  <div className="pr-2">
+                    <span className="text-slate-200 font-medium block">Chỉ rẽ sóng khi nhấn giữ chuột</span>
+                    <span className="text-[11px] text-slate-400">
+                      Rê chuột tự do mặt hồ tĩnh lặng; nhấn giữ để rẽ nước
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setOptions({ ...options, requireClick: !options.requireClick })}
+                    className={`w-10 h-5 flex items-center rounded-full p-0.5 transition-colors shrink-0 ${
+                      options.requireClick ? 'bg-cyan-500' : 'bg-slate-700'
+                    }`}
+                  >
+                    <div
+                      className={`bg-white w-4 h-4 rounded-full shadow transform transition-transform ${
+                        options.requireClick ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-slate-300 font-medium">Độ rộng rẽ sóng (Wake Width)</span>
+                    <span className="font-mono text-cyan-300 tabular-nums">
+                      {(options.wakeWidth * 1000).toFixed(0)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.012"
+                    max="0.045"
+                    step="0.002"
+                    value={options.wakeWidth}
+                    onChange={(e) =>
+                      setOptions({ ...options, wakeWidth: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-400"
+                  />
+                  <span className="text-[11px] text-slate-400">
+                    Độ mở rộng của hai luồng sóng hình chữ V rẽ sang hai bên
+                  </span>
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-slate-300 font-medium">Lực rẽ nước (Wake Intensity)</span>
+                    <span className="font-mono text-cyan-300 tabular-nums">
+                      {options.wakeIntensity.toFixed(2)}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.3"
+                    max="1.8"
+                    step="0.05"
+                    value={options.wakeIntensity}
+                    onChange={(e) =>
+                      setOptions({ ...options, wakeIntensity: parseFloat(e.target.value) })
+                    }
+                    className="w-full accent-cyan-400"
+                  />
+                </div>
+              </div>
+
               {/* Reset to Default */}
               <div className="pt-2">
                 <button
                   onClick={() => {
                     setOptions({
-                      damping: 0.988,
+                      damping: 0.962,
                       waveSpeed: 1.85,
                       refractionStrength: 0.038,
                       specularStrength: 1.8,
@@ -625,8 +694,11 @@ export default function App() {
                       causticsStrength: 0.5,
                       waterTint: [0.04, 0.22, 0.32],
                       tintStrength: 0.22,
-                      dropRadius: 0.026,
-                      dropStrength: 0.7,
+                      dropRadius: 0.018,
+                      dropStrength: 0.30,
+                      requireClick: true,
+                      wakeWidth: 0.014,
+                      wakeIntensity: 0.32,
                     });
                   }}
                   className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-slate-300 rounded-lg flex items-center justify-center gap-1.5 transition-colors border border-white/10"
@@ -732,7 +804,7 @@ export default function App() {
                 </div>
               )}
 
-              {/* Floating Lily Pads */}
+              {/* Floating Lotus / Lily Pads */}
               <div className="flex items-center justify-between p-3 bg-slate-900/60 border border-white/10 rounded-xl">
                 <div>
                   <span className="font-medium text-white block">Lá sen & Hoa súng</span>
@@ -753,6 +825,27 @@ export default function App() {
                   />
                 </button>
               </div>
+
+              {showLilies && (
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="text-slate-300 font-medium">Số lượng lá sen</span>
+                    <span className="font-mono text-cyan-300 tabular-nums">{lilyCount} lá</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="4"
+                    max="24"
+                    step="1"
+                    value={lilyCount}
+                    onChange={(e) => setLilyCount(parseInt(e.target.value, 10))}
+                    className="w-full accent-cyan-400"
+                  />
+                  <span className="text-[11px] text-slate-400">
+                    Bao gồm các cụm lá sen non, lá sen trưởng thành và hoa súng nở e ấp ven hồ.
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </aside>
