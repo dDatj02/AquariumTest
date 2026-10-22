@@ -41,6 +41,7 @@ export interface KoiFish {
   turnRate: number;        // Smooth turning angular velocity (rad/s)
   spineCurvature: number;  // Dynamic spine bending curvature (-1 to 1) for natural supple turning
   speed: number;
+  acceleration: number;    // Gentle forward acceleration when exiting turns
   baseSpeed: number;
   maxSpeed: number;
   size: number;
@@ -185,7 +186,7 @@ export class KoiPondLayer {
     const startX = 0.1 * this.width + Math.random() * 0.8 * this.width;
     const startY = 0.1 * this.height + Math.random() * 0.8 * this.height;
     const angle = Math.random() * Math.PI * 2;
-    const baseSpeed = 1.3 + Math.random() * 0.7;
+    const baseSpeed = 0.85 + Math.random() * 0.45;
 
     return {
       x: startX,
@@ -197,13 +198,14 @@ export class KoiPondLayer {
       turnRate: 0,
       spineCurvature: 0,
       speed: baseSpeed,
+      acceleration: 0,
       baseSpeed,
-      maxSpeed: 3.4,
+      maxSpeed: 2.4,
       size: baseLength,
       swimPhase: Math.random() * Math.PI * 2,
       speciesIndex: chosenIndex,
       depth: 0.15 + Math.random() * 0.55,
-      wiggleFrequency: 3.0 + Math.random() * 0.8,
+      wiggleFrequency: 2.1 + Math.random() * 0.5,
       wanderTimer: Math.random() * 20,
       glidePhase: Math.random() * Math.PI * 2,
     };
@@ -305,16 +307,20 @@ export class KoiPondLayer {
 
     // Update fish movement & fluid kinematics
     for (const fish of this.fishList) {
-      fish.wanderTimer += dt;
-
-      // 1. Organic, continuous drift wandering (sinusoidal harmonized steering)
-      fish.targetAngle += (Math.sin(fish.wanderTimer * 0.75) * 0.38 + Math.cos(fish.wanderTimer * 1.4) * 0.22) * dt;
-      if (Math.random() < 0.012) {
-        fish.targetAngle += (Math.random() - 0.5) * 0.85;
+      // Gracefully scale down speed of existing fish if initialized previously with higher speed
+      if (fish.baseSpeed > 1.35) {
+        fish.baseSpeed = 0.85 + Math.random() * 0.45;
+        fish.speed = Math.min(fish.speed, fish.baseSpeed);
+        fish.wiggleFrequency = 2.1 + Math.random() * 0.5;
       }
 
+      fish.wanderTimer += dt;
+
+      // 1. Organic, continuous drift wandering (gentle, unhurried sinusoidal steering without sudden heading steps)
+      fish.targetAngle += (Math.sin(fish.wanderTimer * 0.35) * 0.18 + Math.cos(fish.wanderTimer * 0.7) * 0.12) * dt;
+
       // 2. Gentle curiosity toward pointer
-      if (pointerX !== undefined && pointerY !== undefined && fish.speed < 2.4) {
+      if (pointerX !== undefined && pointerY !== undefined && fish.speed < 2.0) {
         const pdx = pointerX - fish.x;
         const pdy = pointerY - fish.y;
         const pDist = Math.hypot(pdx, pdy);
@@ -323,76 +329,94 @@ export class KoiPondLayer {
           let dAng = approach - fish.targetAngle;
           while (dAng > Math.PI) dAng -= Math.PI * 2;
           while (dAng < -Math.PI) dAng += Math.PI * 2;
-          fish.targetAngle += dAng * 0.75 * dt;
+          fish.targetAngle += dAng * 0.65 * dt;
         }
       }
 
-      // 3. Smooth potential-field edge avoidance (graceful curved turns near margins)
-      const margin = 90;
+      // 3. Smooth potential-field edge avoidance (starts turning well in advance with wide, graceful arc)
+      const margin = 125;
       let repulseX = 0;
       let repulseY = 0;
-      if (fish.x < margin) repulseX += Math.pow((margin - fish.x) / margin, 1.4);
-      if (fish.x > this.width - margin) repulseX -= Math.pow((fish.x - (this.width - margin)) / margin, 1.4);
-      if (fish.y < margin) repulseY += Math.pow((margin - fish.y) / margin, 1.4);
-      if (fish.y > this.height - margin) repulseY -= Math.pow((fish.y - (this.height - margin)) / margin, 1.4);
+      if (fish.x < margin) repulseX += Math.pow((margin - fish.x) / margin, 1.2);
+      if (fish.x > this.width - margin) repulseX -= Math.pow((fish.x - (this.width - margin)) / margin, 1.2);
+      if (fish.y < margin) repulseY += Math.pow((margin - fish.y) / margin, 1.2);
+      if (fish.y > this.height - margin) repulseY -= Math.pow((fish.y - (this.height - margin)) / margin, 1.2);
 
       if (repulseX !== 0 || repulseY !== 0) {
         const avoidAngle = Math.atan2(repulseY, repulseX);
         let diff = avoidAngle - fish.targetAngle;
         while (diff > Math.PI) diff -= Math.PI * 2;
         while (diff < -Math.PI) diff += Math.PI * 2;
-        fish.targetAngle += diff * 4.2 * dt;
+        fish.targetAngle += diff * 1.6 * dt;
       }
 
-      // 4. Smooth turning dynamics with wider arc and graceful angular momentum
+      // 4. Smooth, gradual turning dynamics (quay đầu từ từ với quán tính tự nhiên)
       let angleDiff = fish.targetAngle - fish.angle;
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
 
-      // Graceful turning rate limit (rad/sec) - wider, majestic arc
-      const maxTurnRate = 2.0;
-      const desiredTurnRate = Math.max(-maxTurnRate, Math.min(maxTurnRate, angleDiff * 2.5));
+      // Smooth, natural turning angular speed limit (~0.85 rad/s)
+      const maxTurnRate = 0.85;
+      const desiredTurnRate = Math.max(-maxTurnRate, Math.min(maxTurnRate, angleDiff * 1.0));
 
-      // Viscoelastic angular acceleration for silky smooth entry into curves
-      fish.turnRate += (desiredTurnRate - fish.turnRate) * 4.6 * dt;
+      // Viscoelastic angular acceleration for silky smooth entry and exit into curves
+      fish.turnRate += (desiredTurnRate - fish.turnRate) * 1.5 * dt;
       fish.angle += fish.turnRate * dt;
 
-      // Dynamic spine curvature tracks turn rate with viscoelastic lag
+      // Dynamic spine curvature: uốn thân TỪ TỪ theo tốc độ quay thực tế
+      // Thân cá uốn cong từ từ khi bắt đầu quay, đạt độ cong tối đa ở giữa khúc cua, rồi từ từ duỗi thẳng lại
       const targetCurvature = Math.max(-1.0, Math.min(1.0, fish.turnRate / maxTurnRate));
-      fish.spineCurvature += (targetCurvature - fish.spineCurvature) * 4.4 * dt;
+      fish.spineCurvature += (targetCurvature - fish.spineCurvature) * 1.6 * dt;
 
-      // 5. Noticeable, graceful slowdown when turning ("chậm lại khi chuyển hướng")
-      // Calculates how deeply the fish is engaged in a turn
-      const turnIntensity = Math.min(1.0, Math.abs(fish.spineCurvature) * 1.1 + (Math.abs(angleDiff) / Math.PI) * 0.8);
+      // 5. Cơ chế chậm lại khi uốn thân quay đầu và gia tốc nhẹ (acceleration) khi duỗi thân bơi tiếp
+      // Đo cường độ quay kết hợp từ độ cong thân (spineCurvature) và vận tốc góc quay (turnRate)
+      const turnIntensity = Math.min(1.0, Math.max(Math.abs(fish.spineCurvature), Math.abs(fish.turnRate) / maxTurnRate));
 
-      // Decelerate down to ~45% speed during tight curves, gliding serenely through the bend
-      const turnBrake = 1.0 - turnIntensity * 0.55;
-      const targetSpeed = fish.baseSpeed * turnBrake;
+      // Khi xoay cua, sức cản nước làm cá giảm tốc tự nhiên xuống ~55% tốc độ thông thường
+      // Cá không bao giờ bị dừng khựng, vẫn lướt chuyển động liên tục
+      const targetSpeed = fish.baseSpeed * (1.0 - turnIntensity * 0.45);
 
-      // Smooth deceleration entering the curve, gentle acceleration out of it
-      const speedAdjustRate = turnIntensity > 0.15 ? 2.8 : 1.5;
-      fish.speed += (targetSpeed - fish.speed) * speedAdjustRate * dt;
+      if (fish.acceleration === undefined) fish.acceleration = 0;
 
-      // 6. Natural swimming rhythm: stroke & glide cycle
-      // In a turn, swimming wave relaxes into a gentle gliding rudder motion
-      const turnGlideFactor = 1.0 - turnIntensity * 0.45;
-      fish.glidePhase += (1.5 + fish.speed * 0.35) * dt;
+      if (targetSpeed > fish.speed) {
+        // GIAI ĐOẠN BẮT ĐẦU BƠI TIẾP SAU KHI QUAY ĐẦU:
+        // Cá duỗi thẳng thân và bắt đầu tăng tốc với gia tốc nhẹ (acceleration),
+        // tạo cảm giác tăng tốc mượt mà tự nhiên như cá thật quẫy vây lấy đà
+        const desiredAccel = Math.min(0.95, (targetSpeed - fish.speed) * 1.6);
+        fish.acceleration += (desiredAccel - fish.acceleration) * 2.2 * dt;
+        fish.speed += Math.max(0, fish.acceleration) * dt;
+        if (fish.speed > targetSpeed) {
+          fish.speed = targetSpeed;
+          fish.acceleration = 0;
+        }
+      } else {
+        // GIAI ĐOẠN GIẢM TỐC TỰ NHIÊN KHI VÀO CUA:
+        // Giảm tốc mượt mà do sức cản nước khi uốn thân
+        const decelRate = 1.8;
+        fish.speed += (targetSpeed - fish.speed) * decelRate * dt;
+        fish.acceleration = 0;
+      }
+
+      // 6. Nhịp bơi tự nhiên liên tục: khi có gia tốc tăng tốc sau quay, đuôi quẫy đẩy nước nhịp nhàng hơn
+      const accelBoost = Math.max(0, fish.acceleration * 0.5);
+      fish.glidePhase += (1.3 + (fish.speed + accelBoost) * 0.35) * dt;
       const strokeFactor = Math.sin(fish.glidePhase);
       const undulationActivity = strokeFactor > 0
-        ? (0.7 + 0.45 * Math.pow(strokeFactor, 1.4)) * turnGlideFactor
-        : (0.38 + 0.25 * (1.0 + strokeFactor)) * turnGlideFactor;
+        ? 0.85 + 0.35 * Math.pow(strokeFactor, 1.2) + accelBoost * 0.25
+        : 0.65 + 0.25 * (1.0 + strokeFactor);
 
-      fish.swimPhase += fish.speed * fish.wiggleFrequency * undulationActivity * dt;
+      // Đuôi và thân vẫn quẫy đều đặn tạo lực đẩy tự nhiên
+      fish.swimPhase += Math.max(0.75, fish.speed) * fish.wiggleFrequency * undulationActivity * dt;
 
-      // Step forward
+      // Di chuyển tiến lên phía trước - đầu luôn luôn hướng chính xác về phía di chuyển
       fish.x += Math.cos(fish.angle) * fish.speed * 60 * dt;
       fish.y += Math.sin(fish.angle) * fish.speed * 60 * dt;
 
-      // Wrap-around bounds protection
-      if (fish.x < -80) fish.x = this.width + 60;
-      if (fish.x > this.width + 80) fish.x = -60;
-      if (fish.y < -80) fish.y = this.height + 60;
-      if (fish.y > this.height + 80) fish.y = -60;
+      // Wrap-around bounds protection (accounting for trailing tail length)
+      if (fish.x < -150) fish.x = this.width + 80;
+      if (fish.x > this.width + 150) fish.x = -80;
+      if (fish.y < -150) fish.y = this.height + 80;
+      if (fish.y > this.height + 150) fish.y = -80;
     }
 
     // Drifting lily pads
@@ -503,49 +527,46 @@ export class KoiPondLayer {
     // In sprite coordinates:
     // Left (x = 0) is tail, Right (x = srcW) is head.
     // In local canvas coordinates:
-    // Head is at +len/2 (forward, +X), Tail is at -len/2 (backward, -X).
+    // The head is anchored at local (0, 0) aligned with fish.angle, and the body/tail trails behind at -X.
+    // This guarantees the fish's head is ALWAYS facing and tracking exactly in the direction of travel!
     for (let i = 0; i < NUM_SLICES; i++) {
       // u: 0.0 at tail tip (i = 0), 1.0 at head tip (i = NUM_SLICES - 1)
       const u = i / (NUM_SLICES - 1);
+      const bendProgress = 1.0 - u; // 0.0 at head, 1.0 at tail tip
 
       // 1. Dynamic Turn Arc Curvature:
-      // When turning, the body flexes into a smooth, deep C-shape (lagging behind the heading vector)
-      const turnLateral = -turnBend * (h * 0.52) * Math.sin((1.0 - u) * Math.PI * 0.58) * Math.pow(1.0 - u, 0.65);
-      const turnAngle = turnBend * 0.55 * Math.pow(1.0 - u, 0.72);
+      // The spine flexes progressively behind the head into a supple, organic C-curve along the turning arc
+      // Using Math.pow(bendProgress, 1.25) guarantees zero lateral/angular deflection at the head (snout & skull stay locked forward)
+      const turnLateral = turnBend * (len * 0.17 + h * 0.35) * Math.sin(bendProgress * Math.PI * 0.55) * Math.pow(bendProgress, 1.25);
+      const turnAngle = -turnBend * 0.75 * Math.pow(bendProgress, 1.25);
 
-      // In turns, soften the wave flap so the smooth curved spine glide dominates
-      const turnRelax = 1.0 - Math.min(0.38, Math.abs(turnBend) * 0.38);
-
-      // 2. Multi-Harmonic Traveling Undulation Wave (propelling from head down to tail):
+      // 2. Multi-Harmonic Traveling Undulation Wave (propelling from behind head down to tail):
       const wavePhase = fish.swimPhase - (1.0 - u) * 3.7;
 
-      // Subtle head stabilization yaw
-      const headNod = Math.sin(fish.swimPhase) * (h * 0.018) * Math.pow(u, 2.0);
+      // Chest & pectoral area flexible breathing motion (fades to 0 at head tip)
+      const chestFlex = Math.sin((1.0 - u) * Math.PI * 1.3) * (h * 0.04) * Math.sin(wavePhase + 0.6) * Math.pow(1.0 - u, 0.6);
 
-      // Chest & pectoral area flexible breathing motion (anterior body flexibility)
-      const chestFlex = Math.sin((1.0 - u) * Math.PI * 1.3) * (h * 0.04 * turnRelax) * Math.sin(wavePhase + 0.6);
-
-      // Mid-trunk belly flex (eliminates stiffness between chest and tail)
-      const bellyFlex = Math.sin((1.0 - u) * Math.PI * 0.95) * (h * 0.08 * turnRelax) * Math.sin(wavePhase);
+      // Mid-trunk belly flex (fades to 0 at head tip)
+      const bellyFlex = Math.sin((1.0 - u) * Math.PI * 0.95) * (h * 0.08) * Math.sin(wavePhase) * Math.pow(1.0 - u, 0.8);
 
       // Caudal peduncle & main tail stroke (power propulsion)
-      const tailSwing = Math.pow(1.0 - u, 1.45) * (h * 0.28 * turnRelax) * Math.sin(wavePhase);
+      const tailSwing = Math.pow(1.0 - u, 1.45) * (h * 0.28) * Math.sin(wavePhase);
 
       // Trailing soft fin ripple (supple "veil" flutter on tail fins)
       const finRipple = u < 0.38
         ? Math.sin(wavePhase - 0.9) * (h * 0.09) * Math.pow((0.38 - u) / 0.38, 1.4)
         : 0;
 
-      // Slice tangent angle from wave derivative + trailing fin lag
-      const waveAngle = Math.cos(wavePhase) * (0.28 * turnRelax * Math.pow(1.0 - u, 0.85)) +
+      // Slice tangent angle from wave derivative + trailing fin lag (strictly 0 at head)
+      const waveAngle = Math.cos(wavePhase) * (0.28 * Math.pow(1.0 - u, 1.1)) +
         (u < 0.38 ? Math.cos(wavePhase - 0.9) * 0.12 * Math.pow((0.38 - u) / 0.38, 1.2) : 0);
 
-      // Combined lateral deflection and angular rotation
-      const lateralY = turnLateral + headNod + chestFlex + bellyFlex + tailSwing + finRipple;
+      // Combined lateral deflection and angular rotation (both are 0 at head, keeping head pointing straight forward)
+      const lateralY = turnLateral + chestFlex + bellyFlex + tailSwing + finRipple;
       const sliceAngle = turnAngle + waveAngle;
 
-      // Local X position of slice center
-      const sliceCenterX = -len * 0.5 + (i + 0.5) * destSliceW;
+      // Local X position of slice center: head is at 0, body trails behind toward -len
+      const sliceCenterX = (i - NUM_SLICES + 0.5) * destSliceW;
 
       ctx.save();
       ctx.translate(sliceCenterX, lateralY);
