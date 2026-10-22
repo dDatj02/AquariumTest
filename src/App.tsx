@@ -23,7 +23,7 @@ import {
   Info,
 } from 'lucide-react';
 import { WaterRippleEngine, WaterOptions } from './webgl/WaterRippleEngine';
-import { KoiPondLayer } from './components/KoiPond';
+import { KoiPondLayer, FISH_SPECIES } from './components/KoiPond';
 import { waterAudio } from './utils/audio';
 import {
   DEFAULT_BACKGROUND_URL,
@@ -62,7 +62,8 @@ export default function App() {
   const [rainMode, setRainMode] = useState<boolean>(false);
   const [rainFrequency, setRainFrequency] = useState<number>(350); // ms per raindrop
   const [showFish, setShowFish] = useState<boolean>(true);
-  const [fishCount, setFishCount] = useState<number>(4);
+  const [fishCount, setFishCount] = useState<number>(5);
+  const [selectedSpecies, setSelectedSpecies] = useState<number | 'all'>('all');
   const [showLilies, setShowLilies] = useState<boolean>(true);
   const [lilyCount, setLilyCount] = useState<number>(12); // Tăng số lượng lá sen lên 12 lá
   const [isMuted, setIsMuted] = useState<boolean>(true);
@@ -174,10 +175,11 @@ export default function App() {
     if (pondLayerRef.current) {
       pondLayerRef.current.showFish = showFish;
       pondLayerRef.current.showLilies = showLilies;
+      pondLayerRef.current.setSpeciesFilter(selectedSpecies);
       pondLayerRef.current.setFishCount(fishCount);
       pondLayerRef.current.setLilyCount(lilyCount);
     }
-  }, [showFish, showLilies, fishCount, lilyCount]);
+  }, [showFish, showLilies, fishCount, lilyCount, selectedSpecies]);
 
   // Handle rain simulation
   useEffect(() => {
@@ -758,14 +760,14 @@ export default function App() {
                 </div>
               )}
 
-              {/* Swimming Koi Fish */}
+              {/* Swimming Fish Ecosystem */}
               <div className="flex items-center justify-between p-3 bg-slate-900/60 border border-white/10 rounded-xl">
                 <div className="flex items-center gap-2.5">
                   <Fish className={`w-4 h-4 ${showFish ? 'text-amber-400' : 'text-slate-400'}`} />
                   <div>
-                    <span className="font-medium text-white block">Đàn cá Koi bơi lội</span>
+                    <span className="font-medium text-white block">Đàn cá cảnh thủy sinh</span>
                     <span className="text-[11px] text-slate-400">
-                      Mô phỏng xương sống uốn lượn, đổ bóng dưới đáy hồ
+                      7 loài cá cảnh tuyệt đẹp: Koi Kohaku, Showa, Vàng ba đuôi, Chép đỏ, La Hán, Hắc Long vây dài
                     </span>
                   </div>
                 </div>
@@ -784,23 +786,73 @@ export default function App() {
               </div>
 
               {showFish && (
-                <div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-slate-300 font-medium">Số lượng cá Koi</span>
-                    <span className="font-mono text-cyan-300 tabular-nums">{fishCount} con</span>
+                <div className="space-y-3.5 pt-1">
+                  <div>
+                    <div className="flex justify-between mb-1">
+                      <span className="text-slate-300 font-medium">Số lượng cá trong hồ</span>
+                      <span className="font-mono text-cyan-300 tabular-nums">{fishCount} con</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="10"
+                      step="1"
+                      value={fishCount}
+                      onChange={(e) => setFishCount(parseInt(e.target.value, 10))}
+                      className="w-full accent-cyan-400"
+                    />
                   </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="8"
-                    step="1"
-                    value={fishCount}
-                    onChange={(e) => setFishCount(parseInt(e.target.value, 10))}
-                    className="w-full accent-cyan-400"
-                  />
-                  <span className="text-[11px] text-slate-400">
-                    Bao gồm các dòng cá: Kohaku (đỏ trắng), Showa (đen đỏ trắng), Yamabuki (vàng óng).
-                  </span>
+
+                  {/* Fish Species Selector */}
+                  <div>
+                    <span className="text-slate-300 font-medium block mb-2">Loài cá bơi lội</span>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      <button
+                        onClick={() => setSelectedSpecies('all')}
+                        className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg border text-left transition-all ${
+                          selectedSpecies === 'all'
+                            ? 'bg-amber-500/20 border-amber-500/50 text-amber-200'
+                            : 'bg-slate-900/50 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                          <span className="font-medium">Tất cả 7 loài xen kẽ (Vườn thủy sinh)</span>
+                        </div>
+                        {selectedSpecies === 'all' && <Check className="w-3.5 h-3.5 text-amber-400" />}
+                      </button>
+
+                      <div className="grid grid-cols-2 gap-1.5 pt-1">
+                        {FISH_SPECIES.map((spec) => (
+                          <button
+                            key={spec.id}
+                            onClick={() => setSelectedSpecies(spec.id)}
+                            className={`flex items-center gap-2 p-1.5 rounded-lg border text-left transition-all ${
+                              selectedSpecies === spec.id
+                                ? 'bg-cyan-500/20 border-cyan-500/50 text-cyan-200 ring-1 ring-cyan-500/30'
+                                : 'bg-slate-900/50 border-white/5 text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+                            }`}
+                          >
+                            <div className="w-10 h-6 bg-slate-950/80 rounded border border-white/10 flex items-center justify-center overflow-hidden shrink-0">
+                              <img
+                                src={spec.url}
+                                alt={spec.label}
+                                className="w-full h-full object-contain p-0.5"
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <span className="block text-[11px] font-medium truncate text-white">
+                                {spec.label.split('(')[0].trim()}
+                              </span>
+                              <span className="block text-[9px] text-slate-400 truncate">
+                                {spec.label.includes('(') ? spec.label.split('(')[1].replace(')', '') : spec.name}
+                              </span>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
 

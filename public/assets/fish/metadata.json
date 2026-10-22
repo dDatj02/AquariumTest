@@ -1,0 +1,65 @@
+[
+  {
+    "id": 0,
+    "name": "kohaku",
+    "label": "Cá Koi Kohaku (Trắng Cam)",
+    "url": "/assets/fish/fish_0.png",
+    "width": 359,
+    "height": 146,
+    "aspectRatio": 2.458904109589041
+  },
+  {
+    "id": 1,
+    "name": "showa",
+    "label": "Cá Koi Showa (Đen Đỏ Trắng)",
+    "url": "/assets/fish/fish_1.png",
+    "width": 326,
+    "height": 147,
+    "aspectRatio": 2.2176870748299318
+  },
+  {
+    "id": 2,
+    "name": "goldfish",
+    "label": "Cá Vàng Ba Đuôi (Fantail)",
+    "url": "/assets/fish/fish_2.png",
+    "width": 378,
+    "height": 143,
+    "aspectRatio": 2.6433566433566433
+  },
+  {
+    "id": 3,
+    "name": "comet",
+    "label": "Cá Chép Đỏ (Red Comet)",
+    "url": "/assets/fish/fish_3.png",
+    "width": 366,
+    "height": 133,
+    "aspectRatio": 2.7518796992481205
+  },
+  {
+    "id": 4,
+    "name": "cichlid",
+    "label": "Cá La Hán Lam Hồng (Cichlid)",
+    "url": "/assets/fish/fish_4.png",
+    "width": 432,
+    "height": 166,
+    "aspectRatio": 2.602409638554217
+  },
+  {
+    "id": 5,
+    "name": "flowerhorn",
+    "label": "Cá La Hán Đại (Flowerhorn)",
+    "url": "/assets/fish/fish_5.png",
+    "width": 474,
+    "height": 179,
+    "aspectRatio": 2.64804469273743
+  },
+  {
+    "id": 6,
+    "name": "arowana",
+    "label": "Cá Rồng Vây Dài (Black Arowana)",
+    "url": "/assets/fish/fish_6.png",
+    "width": 542,
+    "height": 183,
+    "aspectRatio": 2.9617486338797816
+  }
+]

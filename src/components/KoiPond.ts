@@ -1,9 +1,35 @@
 /**
  * Underwater Pond Layer:
- * Renders the lake bed floor image, swimming Japanese Koi fish with realistic spine kinematics,
- * and drifting water lily / lotus pads.
+ * Renders the lake bed floor image, 7 realistic ornamental fish varieties with
+ * fluid spine undulation kinematics & natural drop shadows, and drifting lotus lily pads.
  * Output is drawn onto an offscreen canvas and uploaded to WebGL 2 as the displacement background!
  */
+
+export interface FishSpeciesInfo {
+  id: number;
+  name: string;
+  label: string;
+  url: string;
+  aspectRatio: number;
+  baseScale: number;
+}
+
+export const FISH_SPECIES: FishSpeciesInfo[] = [
+  { id: 0, name: 'kohaku', label: 'Cá Koi Kohaku (Trắng Cam)', url: '/assets/fish/fish_0.png', aspectRatio: 2.46, baseScale: 1.05 },
+  { id: 1, name: 'showa', label: 'Cá Koi Showa (Đen Đỏ Trắng)', url: '/assets/fish/fish_1.png', aspectRatio: 2.22, baseScale: 1.02 },
+  { id: 2, name: 'goldfish', label: 'Cá Vàng Ba Đuôi (Fantail)', url: '/assets/fish/fish_2.png', aspectRatio: 2.64, baseScale: 0.95 },
+  { id: 3, name: 'comet', label: 'Cá Chép Đỏ (Red Comet)', url: '/assets/fish/fish_3.png', aspectRatio: 2.75, baseScale: 1.0 },
+  { id: 4, name: 'cichlid', label: 'Cá La Hán Lam Hồng (Cichlid)', url: '/assets/fish/fish_4.png', aspectRatio: 2.60, baseScale: 1.02 },
+  { id: 5, name: 'flowerhorn', label: 'Cá La Hán Đại (Flowerhorn)', url: '/assets/fish/fish_5.png', aspectRatio: 2.65, baseScale: 1.12 },
+  { id: 6, name: 'arowana', label: 'Cá Rồng Vây Dài (Black Arowana)', url: '/assets/fish/fish_6.png', aspectRatio: 2.96, baseScale: 1.22 },
+];
+
+export interface LoadedFishSprite {
+  img: HTMLImageElement;
+  shadowCanvas: HTMLCanvasElement;
+  isReady: boolean;
+  aspectRatio: number;
+}
 
 export interface KoiFish {
   x: number;
@@ -12,15 +38,18 @@ export interface KoiFish {
   vy: number;
   targetAngle: number;
   angle: number;
+  turnRate: number;        // Smooth turning angular velocity (rad/s)
+  spineCurvature: number;  // Dynamic spine bending curvature (-1 to 1) for natural supple turning
   speed: number;
+  baseSpeed: number;
   maxSpeed: number;
   size: number;
-  spine: { x: number; y: number }[];
-  spineLength: number;
-  numSegments: number;
   swimPhase: number;
-  type: 'kohaku' | 'showa' | 'yamabuki' | 'asagi';
-  depth: number; // 0.0 (near surface) to 1.0 (deep floor)
+  speciesIndex: number;
+  depth: number; // 0.1 (surface) to 0.8 (bottom)
+  wiggleFrequency: number;
+  wanderTimer: number;     // Continuous smooth wander phase
+  glidePhase: number;      // Stroke-and-glide propulsion cycle
 }
 
 export interface LilyPad {
@@ -32,7 +61,7 @@ export interface LilyPad {
   vx: number;
   vy: number;
   cutAngle: number;
-  colorVariant: number; // slight hue variance
+  colorVariant: number;
   flowerColor?: string;
   hasBud?: boolean;
 }
@@ -42,13 +71,15 @@ export class KoiPondLayer {
   public ctx: CanvasRenderingContext2D;
   private bgImage: HTMLImageElement | null = null;
   private isBgLoaded = false;
-  private fishList: KoiFish[] = [];
-  private lilies: LilyPad[] = [];
+  public fishList: KoiFish[] = [];
+  public lilies: LilyPad[] = [];
   public width: number = 1024;
   public height: number = 1024;
   public showFish: boolean = true;
   public showLilies: boolean = true;
   private lastTime: number = 0;
+  private sprites: Map<number, LoadedFishSprite> = new Map();
+  public selectedSpeciesFilter: number | 'all' = 'all';
 
   constructor(width = 1024, height = 1024) {
     this.width = width;
@@ -62,8 +93,40 @@ export class KoiPondLayer {
     }
     this.ctx = context;
 
-    this.initFish(4);
+    this.preloadFishSprites();
+    this.initFish(5);
     this.initLilies(12); // Tăng số lượng lá sen mặc định lên 12 lá
+  }
+
+  private preloadFishSprites() {
+    FISH_SPECIES.forEach((spec) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const spriteRecord: LoadedFishSprite = {
+        img,
+        shadowCanvas: document.createElement('canvas'),
+        isReady: false,
+        aspectRatio: spec.aspectRatio,
+      };
+      this.sprites.set(spec.id, spriteRecord);
+
+      img.onload = () => {
+        spriteRecord.isReady = true;
+        spriteRecord.aspectRatio = img.width / img.height;
+        // Generate soft dark silhouette for shadow
+        const sc = spriteRecord.shadowCanvas;
+        sc.width = img.width;
+        sc.height = img.height;
+        const sCtx = sc.getContext('2d');
+        if (sCtx) {
+          sCtx.drawImage(img, 0, 0);
+          sCtx.globalCompositeOperation = 'source-in';
+          sCtx.fillStyle = '#06080d';
+          sCtx.fillRect(0, 0, img.width, img.height);
+        }
+      };
+      img.src = spec.url;
+    });
   }
 
   public resize(w: number, h: number) {
@@ -81,12 +144,28 @@ export class KoiPondLayer {
   }
 
   public setFishCount(count: number) {
-    const target = Math.max(0, Math.min(10, count));
+    const target = Math.max(0, Math.min(12, count));
     while (this.fishList.length < target) {
-      this.fishList.push(this.createFish());
+      const nextSpecies = this.selectedSpeciesFilter === 'all'
+        ? (this.fishList.length % FISH_SPECIES.length)
+        : this.selectedSpeciesFilter;
+      this.fishList.push(this.createFish(nextSpecies));
     }
     while (this.fishList.length > target) {
       this.fishList.pop();
+    }
+  }
+
+  public setSpeciesFilter(filter: number | 'all') {
+    this.selectedSpeciesFilter = filter;
+    if (filter !== 'all') {
+      this.fishList.forEach((fish) => {
+        fish.speciesIndex = filter;
+      });
+    } else {
+      this.fishList.forEach((fish, idx) => {
+        fish.speciesIndex = idx % FISH_SPECIES.length;
+      });
     }
   }
 
@@ -95,69 +174,63 @@ export class KoiPondLayer {
     this.initLilies(target);
   }
 
-  private createFish(): KoiFish {
-    const types: ('kohaku' | 'showa' | 'yamabuki' | 'asagi')[] = ['kohaku', 'showa', 'yamabuki', 'asagi'];
-    const chosenType = types[Math.floor(Math.random() * types.length)];
-    const size = 32 + Math.random() * 26; // Fish size
-    const numSegments = 11;
-    const segDist = size * 0.16;
-    const startX = Math.random() * this.width;
-    const startY = Math.random() * this.height;
-    const angle = Math.random() * Math.PI * 2;
+  public createFish(speciesIndex?: number): KoiFish {
+    const chosenIndex = speciesIndex !== undefined
+      ? speciesIndex
+      : Math.floor(Math.random() * FISH_SPECIES.length);
+    const spec = FISH_SPECIES[chosenIndex] || FISH_SPECIES[0];
 
-    const spine: { x: number; y: number }[] = [];
-    for (let i = 0; i < numSegments; i++) {
-      spine.push({
-        x: startX - Math.cos(angle) * i * segDist,
-        y: startY - Math.sin(angle) * i * segDist,
-      });
-    }
+    // Fish length in pixels (scaled relative to standard pond size)
+    const baseLength = (95 + Math.random() * 45) * spec.baseScale;
+    const startX = 0.1 * this.width + Math.random() * 0.8 * this.width;
+    const startY = 0.1 * this.height + Math.random() * 0.8 * this.height;
+    const angle = Math.random() * Math.PI * 2;
+    const baseSpeed = 1.3 + Math.random() * 0.7;
 
     return {
       x: startX,
       y: startY,
-      vx: Math.cos(angle) * 1.5,
-      vy: Math.sin(angle) * 1.5,
+      vx: Math.cos(angle) * baseSpeed,
+      vy: Math.sin(angle) * baseSpeed,
       angle,
       targetAngle: angle,
-      speed: 1.4 + Math.random() * 0.8,
-      maxSpeed: 3.2,
-      size,
-      spine,
-      spineLength: segDist,
-      numSegments,
+      turnRate: 0,
+      spineCurvature: 0,
+      speed: baseSpeed,
+      baseSpeed,
+      maxSpeed: 3.4,
+      size: baseLength,
       swimPhase: Math.random() * Math.PI * 2,
-      type: chosenType,
-      depth: 0.2 + Math.random() * 0.6,
+      speciesIndex: chosenIndex,
+      depth: 0.15 + Math.random() * 0.55,
+      wiggleFrequency: 3.0 + Math.random() * 0.8,
+      wanderTimer: Math.random() * 20,
+      glidePhase: Math.random() * Math.PI * 2,
     };
   }
 
   private initFish(count: number) {
     this.fishList = [];
     for (let i = 0; i < count; i++) {
-      this.fishList.push(this.createFish());
+      const speciesIdx = i % FISH_SPECIES.length;
+      this.fishList.push(this.createFish(speciesIdx));
     }
   }
 
-  /**
-   * Tạo số lượng lá sen phong phú, tự nhiên theo từng cụm (clusters)
-   * Giữ lòng hồ thoáng đãng để cá bơi và sóng nước lan tỏa đẹp mắt
-   */
   private initLilies(count: number) {
     this.lilies = [];
     if (count <= 0) return;
 
-    // Các cụm tâm tự nhiên ven bờ hồ
+    // Các cụm tâm tự nhiên ven bờ hồ giữ vùng giữa thoáng đãng
     const clusters = [
-      { cx: 0.18, cy: 0.22, radius: 0.18 }, // Cụm góc trên trái
-      { cx: 0.82, cy: 0.25, radius: 0.18 }, // Cụm góc trên phải
-      { cx: 0.20, cy: 0.78, radius: 0.20 }, // Cụm góc dưới trái
-      { cx: 0.80, cy: 0.75, radius: 0.20 }, // Cụm góc dưới phải
-      { cx: 0.50, cy: 0.15, radius: 0.15 }, // Cụm viền trên
+      { cx: 0.18, cy: 0.22, radius: 0.18 },
+      { cx: 0.82, cy: 0.25, radius: 0.18 },
+      { cx: 0.20, cy: 0.78, radius: 0.20 },
+      { cx: 0.80, cy: 0.75, radius: 0.20 },
+      { cx: 0.50, cy: 0.14, radius: 0.14 },
     ];
 
     for (let i = 0; i < count; i++) {
-      // 75% lá phân bố theo các cụm tự nhiên, 25% trôi dạt ngẫu nhiên
       let x: number, y: number;
       if (Math.random() < 0.75 && clusters.length > 0) {
         const cl = clusters[i % clusters.length];
@@ -170,29 +243,27 @@ export class KoiPondLayer {
         y = (0.1 + Math.random() * 0.8) * this.height;
       }
 
-      // Đa dạng kích thước lá từ nhỏ xinh đến lá sen lớn trưởng thành
       const sizeType = Math.random();
       let radius: number;
       if (sizeType < 0.35) {
-        radius = 20 + Math.random() * 12; // Lá sen non
+        radius = 20 + Math.random() * 12; // Lá nhỏ
       } else if (sizeType < 0.8) {
-        radius = 34 + Math.random() * 16; // Lá sen vừa
+        radius = 34 + Math.random() * 16; // Lá vừa
       } else {
         radius = 52 + Math.random() * 16; // Lá sen lớn
       }
 
-      // Hoa sen nở trên các lá sen lớn (khoảng 25% số lá)
       let flowerColor: string | undefined;
       let hasBud: boolean | undefined;
 
-      if (radius > 36 && Math.random() < 0.32) {
+      if (radius > 36 && Math.random() < 0.35) {
         const flowerRnd = Math.random();
         if (flowerRnd < 0.5) {
-          flowerColor = '#f472b6'; // Hoa sen hồng phai
+          flowerColor = '#f472b6'; // Hoa sen hồng
         } else if (flowerRnd < 0.8) {
-          flowerColor = '#f8fafc'; // Hoa súng trắng thanh tao
+          flowerColor = '#f8fafc'; // Hoa súng trắng
         } else {
-          hasBud = true; // Búp sen e ấp
+          hasBud = true; // Búp sen
           flowerColor = '#ec4899';
         }
       }
@@ -218,81 +289,113 @@ export class KoiPondLayer {
       const dx = fish.x - worldX;
       const dy = fish.y - worldY;
       const dist = Math.hypot(dx, dy);
-      if (dist < 220) {
-        // Dart away from splash
+      if (dist < 280) {
+        // Dart away from water disturbance with realistic surge
         const fleeAngle = Math.atan2(dy, dx);
-        fish.targetAngle = fleeAngle + (Math.random() - 0.5) * 0.5;
-        fish.speed = Math.min(fish.maxSpeed * 1.8, fish.speed + 2.5);
+        fish.targetAngle = fleeAngle + (Math.random() - 0.5) * 0.4;
+        fish.speed = Math.min(fish.maxSpeed * 1.8, fish.speed + 2.8);
+        fish.glidePhase = Math.PI * 0.5; // Trigger burst stroke
       }
     }
   }
 
   public update(time: number, pointerX?: number, pointerY?: number) {
-    const dt = this.lastTime ? Math.min((time - this.lastTime) / 1000, 0.1) : 0.016;
+    const dt = this.lastTime ? Math.min((time - this.lastTime) / 1000, 0.08) : 0.016;
     this.lastTime = time;
 
-    // Update fish kinematics
+    // Update fish movement & fluid kinematics
     for (const fish of this.fishList) {
-      fish.swimPhase += fish.speed * 3.5 * dt;
+      fish.wanderTimer += dt;
 
-      // Random slow wandering target angle
-      if (Math.random() < 0.02) {
-        fish.targetAngle += (Math.random() - 0.5) * 1.4;
+      // 1. Organic, continuous drift wandering (sinusoidal harmonized steering)
+      fish.targetAngle += (Math.sin(fish.wanderTimer * 0.75) * 0.38 + Math.cos(fish.wanderTimer * 1.4) * 0.22) * dt;
+      if (Math.random() < 0.012) {
+        fish.targetAngle += (Math.random() - 0.5) * 0.85;
       }
 
-      // Curious attraction
-      if (pointerX !== undefined && pointerY !== undefined) {
+      // 2. Gentle curiosity toward pointer
+      if (pointerX !== undefined && pointerY !== undefined && fish.speed < 2.4) {
         const pdx = pointerX - fish.x;
         const pdy = pointerY - fish.y;
         const pDist = Math.hypot(pdx, pdy);
-        if (pDist < 160 && pDist > 40) {
+        if (pDist < 220 && pDist > 45) {
           const approach = Math.atan2(pdy, pdx);
-          fish.targetAngle = approach * 0.2 + fish.targetAngle * 0.8;
+          let dAng = approach - fish.targetAngle;
+          while (dAng > Math.PI) dAng -= Math.PI * 2;
+          while (dAng < -Math.PI) dAng += Math.PI * 2;
+          fish.targetAngle += dAng * 0.75 * dt;
         }
       }
 
-      // Border containment
-      const margin = 80;
-      if (fish.x < margin) fish.targetAngle = 0;
-      else if (fish.x > this.width - margin) fish.targetAngle = Math.PI;
-      if (fish.y < margin) fish.targetAngle = Math.PI / 2;
-      else if (fish.y > this.height - margin) fish.targetAngle = -Math.PI / 2;
+      // 3. Smooth potential-field edge avoidance (graceful curved turns near margins)
+      const margin = 90;
+      let repulseX = 0;
+      let repulseY = 0;
+      if (fish.x < margin) repulseX += Math.pow((margin - fish.x) / margin, 1.4);
+      if (fish.x > this.width - margin) repulseX -= Math.pow((fish.x - (this.width - margin)) / margin, 1.4);
+      if (fish.y < margin) repulseY += Math.pow((margin - fish.y) / margin, 1.4);
+      if (fish.y > this.height - margin) repulseY -= Math.pow((fish.y - (this.height - margin)) / margin, 1.4);
 
-      // Smooth angle interpolation
+      if (repulseX !== 0 || repulseY !== 0) {
+        const avoidAngle = Math.atan2(repulseY, repulseX);
+        let diff = avoidAngle - fish.targetAngle;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        fish.targetAngle += diff * 4.2 * dt;
+      }
+
+      // 4. Smooth turning dynamics with wider arc and graceful angular momentum
       let angleDiff = fish.targetAngle - fish.angle;
       while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
       while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-      fish.angle += angleDiff * 4.0 * dt;
 
-      // Normal speed decay back to baseline
-      fish.speed += (1.6 - fish.speed) * 0.8 * dt;
+      // Graceful turning rate limit (rad/sec) - wider, majestic arc
+      const maxTurnRate = 2.0;
+      const desiredTurnRate = Math.max(-maxTurnRate, Math.min(maxTurnRate, angleDiff * 2.5));
 
-      // Advance head
+      // Viscoelastic angular acceleration for silky smooth entry into curves
+      fish.turnRate += (desiredTurnRate - fish.turnRate) * 4.6 * dt;
+      fish.angle += fish.turnRate * dt;
+
+      // Dynamic spine curvature tracks turn rate with viscoelastic lag
+      const targetCurvature = Math.max(-1.0, Math.min(1.0, fish.turnRate / maxTurnRate));
+      fish.spineCurvature += (targetCurvature - fish.spineCurvature) * 4.4 * dt;
+
+      // 5. Noticeable, graceful slowdown when turning ("chậm lại khi chuyển hướng")
+      // Calculates how deeply the fish is engaged in a turn
+      const turnIntensity = Math.min(1.0, Math.abs(fish.spineCurvature) * 1.1 + (Math.abs(angleDiff) / Math.PI) * 0.8);
+
+      // Decelerate down to ~45% speed during tight curves, gliding serenely through the bend
+      const turnBrake = 1.0 - turnIntensity * 0.55;
+      const targetSpeed = fish.baseSpeed * turnBrake;
+
+      // Smooth deceleration entering the curve, gentle acceleration out of it
+      const speedAdjustRate = turnIntensity > 0.15 ? 2.8 : 1.5;
+      fish.speed += (targetSpeed - fish.speed) * speedAdjustRate * dt;
+
+      // 6. Natural swimming rhythm: stroke & glide cycle
+      // In a turn, swimming wave relaxes into a gentle gliding rudder motion
+      const turnGlideFactor = 1.0 - turnIntensity * 0.45;
+      fish.glidePhase += (1.5 + fish.speed * 0.35) * dt;
+      const strokeFactor = Math.sin(fish.glidePhase);
+      const undulationActivity = strokeFactor > 0
+        ? (0.7 + 0.45 * Math.pow(strokeFactor, 1.4)) * turnGlideFactor
+        : (0.38 + 0.25 * (1.0 + strokeFactor)) * turnGlideFactor;
+
+      fish.swimPhase += fish.speed * fish.wiggleFrequency * undulationActivity * dt;
+
+      // Step forward
       fish.x += Math.cos(fish.angle) * fish.speed * 60 * dt;
       fish.y += Math.sin(fish.angle) * fish.speed * 60 * dt;
 
-      // Wrap-around bounds guard
-      if (fish.x < -40) fish.x = this.width + 30;
-      if (fish.x > this.width + 40) fish.x = -30;
-      if (fish.y < -40) fish.y = this.height + 30;
-      if (fish.y > this.height + 40) fish.y = -30;
-
-      // Spine inverse kinematics
-      fish.spine[0] = { x: fish.x, y: fish.y };
-      for (let i = 1; i < fish.numSegments; i++) {
-        const prev = fish.spine[i - 1];
-        const curr = fish.spine[i];
-        const dx = curr.x - prev.x;
-        const dy = curr.y - prev.y;
-        let d = Math.hypot(dx, dy);
-        if (d === 0) d = 0.001;
-        const factor = fish.spineLength / d;
-        curr.x = prev.x + dx * factor;
-        curr.y = prev.y + dy * factor;
-      }
+      // Wrap-around bounds protection
+      if (fish.x < -80) fish.x = this.width + 60;
+      if (fish.x > this.width + 80) fish.x = -60;
+      if (fish.y < -80) fish.y = this.height + 60;
+      if (fish.y > this.height + 80) fish.y = -60;
     }
 
-    // Update lily pads drifting gently with subtle bobbing
+    // Drifting lily pads
     for (const lily of this.lilies) {
       lily.rotation += lily.vRot;
       lily.x += lily.vx;
@@ -335,14 +438,14 @@ export class KoiPondLayer {
       ctx.fillRect(0, 0, width, height);
     }
 
-    // 2. Render Koi Shadows on Pond Floor (Realistic depth illusion)
+    // 2. Render Fish Shadows on Pond Floor (with realistic depth offset & matching body undulation)
     if (this.showFish) {
       for (const fish of this.fishList) {
-        this.renderFishShadow(ctx, fish);
+        this.renderFishUndulated(ctx, fish, true);
       }
-      // 3. Render Koi Fish Bodies
+      // 3. Render Fish Bodies (7 ornamental species with fluid swimming undulation)
       for (const fish of this.fishList) {
-        this.renderFishBody(ctx, fish);
+        this.renderFishUndulated(ctx, fish, false);
       }
     }
 
@@ -354,210 +457,111 @@ export class KoiPondLayer {
     }
   }
 
-  private renderFishShadow(ctx: CanvasRenderingContext2D, fish: KoiFish) {
-    const shadowOffset = 18 + fish.depth * 25;
+  /**
+   * Renders the fish sprite (or its shadow) sliced into vertical strips,
+   * undulating with a traveling sine wave from head to tail to create
+   * organic, life-like spine and fin motion!
+   */
+  private renderFishUndulated(ctx: CanvasRenderingContext2D, fish: KoiFish, isShadow: boolean) {
+    const sprite = this.sprites.get(fish.speciesIndex);
+    if (!sprite || !sprite.isReady) return;
+
+    const sourceCanvas = isShadow ? sprite.shadowCanvas : sprite.img;
+    const srcW = sprite.img.width;
+    const srcH = sprite.img.height;
+    if (srcW === 0 || srcH === 0) return;
+
+    const len = fish.size;
+    const h = len / sprite.aspectRatio;
+
+    // Shadow offset dependent on fish depth
+    const shadowDist = 18 + fish.depth * 28;
+    const shadowAlpha = 0.28 * (1.0 - fish.depth * 0.4);
+
     ctx.save();
-    ctx.translate(shadowOffset * 0.7, shadowOffset);
-    ctx.globalAlpha = 0.22 * (1.0 - fish.depth * 0.4);
-    ctx.fillStyle = '#06080b';
 
-    this.drawFishPath(ctx, fish);
-    ctx.fill();
-    ctx.restore();
-  }
-
-  private renderFishBody(ctx: CanvasRenderingContext2D, fish: KoiFish) {
-    ctx.save();
-    ctx.globalAlpha = 0.95 - fish.depth * 0.2;
-
-    const baseColors: Record<KoiFish['type'], { main: string; pattern: string; accent: string }> = {
-      kohaku: { main: '#f4f2ec', pattern: '#d7261e', accent: '#ffffff' },
-      showa: { main: '#1c1b1a', pattern: '#d8281d', accent: '#f5f3ec' },
-      yamabuki: { main: '#f59e0b', pattern: '#fbbf24', accent: '#b45309' },
-      asagi: { main: '#64748b', pattern: '#ef4444', accent: '#cbd5e1' },
-    };
-    const col = baseColors[fish.type];
-
-    // Pectoral Fins (Waving)
-    this.drawPectoralFins(ctx, fish, col.main);
-
-    // Main Body
-    this.drawFishPath(ctx, fish);
-    ctx.fillStyle = col.main;
-    ctx.fill();
-
-    // Secondary colored pattern spots
-    this.drawFishMarkings(ctx, fish, col.pattern, col.accent);
-
-    // Dorsal Fin along spine
-    this.drawDorsalFin(ctx, fish);
-
-    // Eyes
-    this.drawFishEyes(ctx, fish);
-
-    ctx.restore();
-  }
-
-  private drawFishPath(ctx: CanvasRenderingContext2D, fish: KoiFish) {
-    const spine = fish.spine;
-    const len = spine.length;
-    const halfWidths = [
-      fish.size * 0.16, // Snout
-      fish.size * 0.28, // Head
-      fish.size * 0.35, // Shoulders (widest)
-      fish.size * 0.33,
-      fish.size * 0.28,
-      fish.size * 0.23,
-      fish.size * 0.17,
-      fish.size * 0.12,
-      fish.size * 0.08,
-      fish.size * 0.06, // Peduncle
-      fish.size * 0.05, // Tail joint
-    ];
-
-    const leftPts: { x: number; y: number }[] = [];
-    const rightPts: { x: number; y: number }[] = [];
-
-    for (let i = 0; i < len; i++) {
-      let nx = 0, ny = 0;
-      if (i === 0) {
-        const dx = spine[0].x - spine[1].x;
-        const dy = spine[0].y - spine[1].y;
-        const d = Math.hypot(dx, dy) || 1;
-        nx = -dy / d;
-        ny = dx / d;
-      } else {
-        const dx = spine[i - 1].x - spine[i].x;
-        const dy = spine[i - 1].y - spine[i].y;
-        const d = Math.hypot(dx, dy) || 1;
-        nx = -dy / d;
-        ny = dx / d;
-      }
-      const w = halfWidths[i] || fish.size * 0.1;
-      leftPts.push({ x: spine[i].x + nx * w, y: spine[i].y + ny * w });
-      rightPts.push({ x: spine[i].x - nx * w, y: spine[i].y - ny * w });
+    if (isShadow) {
+      ctx.translate(fish.x + shadowDist * 0.65, fish.y + shadowDist);
+      ctx.globalAlpha = shadowAlpha;
+    } else {
+      ctx.translate(fish.x, fish.y);
+      // Subtle depth transparency and color grading for water absorption
+      ctx.globalAlpha = 0.96 - fish.depth * 0.15;
     }
 
-    ctx.beginPath();
-    ctx.moveTo(leftPts[0].x, leftPts[0].y);
-    const headTipX = spine[0].x + Math.cos(fish.angle) * fish.size * 0.22;
-    const headTipY = spine[0].y + Math.sin(fish.angle) * fish.size * 0.22;
-    ctx.quadraticCurveTo(headTipX, headTipY, rightPts[0].x, rightPts[0].y);
+    // Rotate so fish heads toward fish.angle
+    ctx.rotate(fish.angle);
 
-    for (let i = 1; i < len; i++) {
-      ctx.lineTo(rightPts[i].x, rightPts[i].y);
+    // Number of vertical slice strips along length for silky smooth spine deformation
+    const NUM_SLICES = 24;
+    const srcSliceW = srcW / NUM_SLICES;
+    const destSliceW = len / NUM_SLICES;
+
+    // Turn spine curvature (-1 to 1) bends the entire body gracefully along the turning arc
+    const turnBend = fish.spineCurvature;
+
+    // In sprite coordinates:
+    // Left (x = 0) is tail, Right (x = srcW) is head.
+    // In local canvas coordinates:
+    // Head is at +len/2 (forward, +X), Tail is at -len/2 (backward, -X).
+    for (let i = 0; i < NUM_SLICES; i++) {
+      // u: 0.0 at tail tip (i = 0), 1.0 at head tip (i = NUM_SLICES - 1)
+      const u = i / (NUM_SLICES - 1);
+
+      // 1. Dynamic Turn Arc Curvature:
+      // When turning, the body flexes into a smooth, deep C-shape (lagging behind the heading vector)
+      const turnLateral = -turnBend * (h * 0.52) * Math.sin((1.0 - u) * Math.PI * 0.58) * Math.pow(1.0 - u, 0.65);
+      const turnAngle = turnBend * 0.55 * Math.pow(1.0 - u, 0.72);
+
+      // In turns, soften the wave flap so the smooth curved spine glide dominates
+      const turnRelax = 1.0 - Math.min(0.38, Math.abs(turnBend) * 0.38);
+
+      // 2. Multi-Harmonic Traveling Undulation Wave (propelling from head down to tail):
+      const wavePhase = fish.swimPhase - (1.0 - u) * 3.7;
+
+      // Subtle head stabilization yaw
+      const headNod = Math.sin(fish.swimPhase) * (h * 0.018) * Math.pow(u, 2.0);
+
+      // Chest & pectoral area flexible breathing motion (anterior body flexibility)
+      const chestFlex = Math.sin((1.0 - u) * Math.PI * 1.3) * (h * 0.04 * turnRelax) * Math.sin(wavePhase + 0.6);
+
+      // Mid-trunk belly flex (eliminates stiffness between chest and tail)
+      const bellyFlex = Math.sin((1.0 - u) * Math.PI * 0.95) * (h * 0.08 * turnRelax) * Math.sin(wavePhase);
+
+      // Caudal peduncle & main tail stroke (power propulsion)
+      const tailSwing = Math.pow(1.0 - u, 1.45) * (h * 0.28 * turnRelax) * Math.sin(wavePhase);
+
+      // Trailing soft fin ripple (supple "veil" flutter on tail fins)
+      const finRipple = u < 0.38
+        ? Math.sin(wavePhase - 0.9) * (h * 0.09) * Math.pow((0.38 - u) / 0.38, 1.4)
+        : 0;
+
+      // Slice tangent angle from wave derivative + trailing fin lag
+      const waveAngle = Math.cos(wavePhase) * (0.28 * turnRelax * Math.pow(1.0 - u, 0.85)) +
+        (u < 0.38 ? Math.cos(wavePhase - 0.9) * 0.12 * Math.pow((0.38 - u) / 0.38, 1.2) : 0);
+
+      // Combined lateral deflection and angular rotation
+      const lateralY = turnLateral + headNod + chestFlex + bellyFlex + tailSwing + finRipple;
+      const sliceAngle = turnAngle + waveAngle;
+
+      // Local X position of slice center
+      const sliceCenterX = -len * 0.5 + (i + 0.5) * destSliceW;
+
+      ctx.save();
+      ctx.translate(sliceCenterX, lateralY);
+      ctx.rotate(sliceAngle);
+
+      // Overlap slightly (1.3px) to prevent sub-pixel gaps between adjacent slices
+      const overlap = 1.3;
+      ctx.drawImage(
+        sourceCanvas,
+        i * srcSliceW, 0, srcSliceW, srcH,
+        -destSliceW * 0.5 - overlap * 0.5, -h * 0.5, destSliceW + overlap, h
+      );
+
+      ctx.restore();
     }
 
-    // Caudal Fin (Tail Fan)
-    const tailBase = spine[len - 1];
-    const tailAngle = Math.atan2(tailBase.y - spine[len - 2].y, tailBase.x - spine[len - 2].x);
-    const tailOsc = Math.sin(fish.swimPhase) * 0.4;
-    const finLen = fish.size * 0.7;
-    const tX = tailBase.x + Math.cos(tailAngle + tailOsc) * finLen;
-    const tY = tailBase.y + Math.sin(tailAngle + tailOsc) * finLen;
-    const fSpread = fish.size * 0.35;
-    const perpA = tailAngle + Math.PI / 2;
-
-    ctx.lineTo(tX - Math.cos(perpA) * fSpread, tY - Math.sin(perpA) * fSpread);
-    ctx.quadraticCurveTo(
-      tailBase.x + Math.cos(tailAngle) * (finLen * 0.5),
-      tailBase.y + Math.sin(tailAngle) * (finLen * 0.5),
-      tX + Math.cos(perpA) * fSpread,
-      tY + Math.sin(perpA) * fSpread
-    );
-    ctx.lineTo(leftPts[len - 1].x, leftPts[len - 1].y);
-
-    for (let i = len - 2; i >= 0; i--) {
-      ctx.lineTo(leftPts[i].x, leftPts[i].y);
-    }
-    ctx.closePath();
-  }
-
-  private drawPectoralFins(ctx: CanvasRenderingContext2D, fish: KoiFish, col: string) {
-    const head = fish.spine[1];
-    const prev = fish.spine[0];
-    const angle = Math.atan2(head.y - prev.y, head.x - prev.x);
-    const finOsc = Math.sin(fish.swimPhase * 0.8) * 0.25;
-
-    ctx.save();
-    ctx.fillStyle = col;
-    ctx.globalAlpha = 0.85;
-
-    // Left fin
-    ctx.beginPath();
-    const lX = head.x + Math.cos(angle - Math.PI / 2) * fish.size * 0.3;
-    const lY = head.y + Math.sin(angle - Math.PI / 2) * fish.size * 0.3;
-    const lTipX = lX + Math.cos(angle - 2.2 + finOsc) * fish.size * 0.55;
-    const lTipY = lY + Math.sin(angle - 2.2 + finOsc) * fish.size * 0.55;
-    ctx.moveTo(lX, lY);
-    ctx.quadraticCurveTo(lX + Math.cos(angle - 1.6) * fish.size * 0.35, lY + Math.sin(angle - 1.6) * fish.size * 0.35, lTipX, lTipY);
-    ctx.quadraticCurveTo(lX + Math.cos(angle - 2.7) * fish.size * 0.4, lY + Math.sin(angle - 2.7) * fish.size * 0.4, lX, lY);
-    ctx.fill();
-
-    // Right fin
-    ctx.beginPath();
-    const rX = head.x + Math.cos(angle + Math.PI / 2) * fish.size * 0.3;
-    const rY = head.y + Math.sin(angle + Math.PI / 2) * fish.size * 0.3;
-    const rTipX = rX + Math.cos(angle + 2.2 - finOsc) * fish.size * 0.55;
-    const rTipY = rY + Math.sin(angle + 2.2 - finOsc) * fish.size * 0.55;
-    ctx.moveTo(rX, rY);
-    ctx.quadraticCurveTo(rX + Math.cos(angle + 1.6) * fish.size * 0.35, rY + Math.sin(angle + 1.6) * fish.size * 0.35, rTipX, rTipY);
-    ctx.quadraticCurveTo(rX + Math.cos(angle + 2.7) * fish.size * 0.4, rY + Math.sin(angle + 2.7) * fish.size * 0.4, rX, rY);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  private drawFishMarkings(ctx: CanvasRenderingContext2D, fish: KoiFish, patternColor: string, accentColor: string) {
-    if (fish.type === 'yamabuki') return;
-
-    ctx.save();
-    const h = fish.spine[1];
-    ctx.fillStyle = patternColor;
-    ctx.beginPath();
-    ctx.arc(h.x, h.y, fish.size * 0.16, 0, Math.PI * 2);
-    ctx.fill();
-
-    const m1 = fish.spine[3];
-    ctx.beginPath();
-    ctx.ellipse(m1.x, m1.y, fish.size * 0.22, fish.size * 0.14, fish.angle, 0, Math.PI * 2);
-    ctx.fill();
-
-    const m2 = fish.spine[6];
-    ctx.fillStyle = fish.type === 'showa' ? accentColor : patternColor;
-    ctx.beginPath();
-    ctx.ellipse(m2.x, m2.y, fish.size * 0.16, fish.size * 0.1, fish.angle + 0.3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-  }
-
-  private drawDorsalFin(ctx: CanvasRenderingContext2D, fish: KoiFish) {
-    ctx.save();
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(fish.spine[2].x, fish.spine[2].y);
-    for (let i = 3; i <= 6; i++) {
-      ctx.lineTo(fish.spine[i].x, fish.spine[i].y);
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  private drawFishEyes(ctx: CanvasRenderingContext2D, fish: KoiFish) {
-    const head = fish.spine[0];
-    const perpA = fish.angle + Math.PI / 2;
-    const eyeDist = fish.size * 0.14;
-
-    ctx.save();
-    ctx.fillStyle = '#0f172a';
-    ctx.beginPath();
-    ctx.arc(head.x + Math.cos(perpA) * eyeDist, head.y + Math.sin(perpA) * eyeDist, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(head.x - Math.cos(perpA) * eyeDist, head.y - Math.sin(perpA) * eyeDist, 2.2, 0, Math.PI * 2);
-    ctx.fill();
     ctx.restore();
   }
 
@@ -633,7 +637,6 @@ export class KoiPondLayer {
     // 3. Blooming Lotus Flower or Bud if present
     if (lily.flowerColor) {
       if (lily.hasBud) {
-        // E ấp búp sen
         ctx.fillStyle = lily.flowerColor;
         ctx.beginPath();
         ctx.ellipse(0, 0, 9, 5, Math.PI / 4, 0, Math.PI * 2);
@@ -643,7 +646,6 @@ export class KoiPondLayer {
         ctx.ellipse(1, -1, 6, 3, Math.PI / 4, 0, Math.PI * 2);
         ctx.fill();
       } else {
-        // Hoa sen nở rực rỡ với nhiều lớp cánh
         const numPetals = 10;
         ctx.fillStyle = lily.flowerColor;
         for (let p = 0; p < numPetals; p++) {
@@ -652,7 +654,6 @@ export class KoiPondLayer {
           ctx.ellipse(Math.cos(pAng) * 7, Math.sin(pAng) * 7, 9, 4.5, pAng, 0, Math.PI * 2);
           ctx.fill();
         }
-        // Lớp cánh trong
         ctx.fillStyle = lily.flowerColor === '#f472b6' ? '#fbcfe8' : '#ffffff';
         for (let p = 0; p < 6; p++) {
           const pAng = (p / 6) * Math.PI * 2 + 0.3;
@@ -660,7 +661,6 @@ export class KoiPondLayer {
           ctx.ellipse(Math.cos(pAng) * 4, Math.sin(pAng) * 4, 6, 3, pAng, 0, Math.PI * 2);
           ctx.fill();
         }
-        // Nhụy hoa vàng óng
         ctx.fillStyle = '#eab308';
         ctx.beginPath();
         ctx.arc(0, 0, 4.2, 0, Math.PI * 2);
